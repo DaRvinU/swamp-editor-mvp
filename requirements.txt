@@ -1,5 +1,5 @@
 streamlit
-firebase-admin
 gigachat
-pydantic
+firebase-admin
 json-repair
+ddgs
