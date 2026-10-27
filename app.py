@@ -99,6 +99,7 @@ def check_news(text: str):
             base_url="https://api.giga.chat/v1",
             credentials=giga_key, 
             scope="GIGACHAT_API_PERS", 
+            model="GigaChat-2", 
             verify_ssl_certs=False
         ) as client:
             response = client.chat.create(prompt)
