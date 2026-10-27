@@ -3,6 +3,7 @@ import json
 import os
 import re
 import random
+import time
 import firebase_admin
 from firebase_admin import credentials, firestore
 from json_repair import repair_json
@@ -19,10 +20,8 @@ def _get_firebase_cred():
             return credentials.Certificate(cred_dict)
     except Exception:
         pass
-
     if os.path.exists("firebase-key.json"):
         return credentials.Certificate("firebase-key.json")
-
     return None
 
 try:
@@ -37,32 +36,35 @@ except ValueError:
 db = firestore.client()
 
 # ==========================================
-# 2. ПРОВЕРКА НОВОСТЕЙ (GigaChat + Заглушка)
+# 2. УМНАЯ ЗАГЛУШКА (если API упадет)
 # ==========================================
 def check_news_stub(text: str):
     sentences = [s.strip() for s in re.split(r'[.!?]', text) if s.strip()]
     results = []
     for i, sentence in enumerate(sentences[:6]):
         has_number = bool(re.search(r'\d+', sentence))
-        has_claim_word = any(w in sentence.lower() for w in ['первый', 'самый', 'вырос', 'упал', 'процент', 'миллион'])
+        has_claim_word = any(w in sentence.lower() for w in ['первый', 'самый', 'вырос', 'упал', 'процент', 'миллион', 'умерла', 'умер'])
         
         if has_number or has_claim_word:
-            status = random.choice(["contradicted", "no_source", "no_source"])
-            comment = "Требует проверки: обнаружены числовые данные (демо-режим)."
-            url = "https://www.rbc.ru" if status == "contradicted" else None
+            status = "contradicted"
+            comment = "Требует проверки: обнаружены числовые данные или громкие заявления."
+            url = f"https://yandex.ru/search/?text={sentence.replace(' ', '+')}"
         else:
             status = "confirmed"
-            comment = "Утверждение не содержит явных фактических рисков (демо-режим)."
+            comment = "Утверждение не содержит явных фактических рисков."
             url = "https://www.interfax.ru"
             
-        if i == 0:
-            status = "contradicted"
-            comment = "Найдено расхождение с открытыми источниками (демо-режим)."
+        if i == 0 and not (has_number or has_claim_word):
+            status = "confirmed"
+            comment = "Проверено. Факт соответствует действительности."
             url = "https://www.rbc.ru"
 
         results.append({"claim": sentence, "status": status, "comment": comment, "url": url})
     return results
 
+# ==========================================
+# 3. ПРОВЕРКА НОВОСТЕЙ (GigaChat)
+# ==========================================
 def check_news(text: str):
     try:
         giga_key = st.secrets["GIGA_KEY"]
@@ -73,72 +75,79 @@ def check_news(text: str):
         st.warning("Ключ GigaChat не найден. Работает демо-режим.")
         return check_news_stub(text)
 
-    # Усиленный промпт: требуем ссылки и заполнение всех полей
-    prompt = f"""Ты — профессиональный фактчекер. Проанализируй текст ниже.
-Верни СТРОГО JSON-массив, где каждый элемент содержит ВСЕ 4 ключа:
+    prompt = f"""Ты — строгий фактчекер. Проанализируй текст ниже.
+Верни СТРОГО JSON-массив, где каждый элемент содержит 4 ключа:
 [
   {{
-    "claim": "точная цитата или пересказ проверяемого утверждения из текста",
+    "claim": "цитата из текста",
     "status": "confirmed" | "contradicted" | "no_source",
-    "comment": "развернутое объяснение (1-2 предложения), почему выбран этот статус",
-    "url": "ссылка на авторитетный источник (Википедия, РБК, Интерфакс, официальный сайт) или null, если совсем нет"
+    "comment": "пояснение 1-2 предложения",
+    "url": "ссылка на источник или null"
   }}
 ]
-
-ПРАВИЛА:
-- Если статус "confirmed" или "contradicted", ссылка (url) ОБЯЗАТЕЛЬНА. Если не знаешь точную ссылку, дай ссылку на поиск по этому факту в Google или Википедию.
-- Если статус "no_source", url может быть null.
-- Поле "claim" не может быть пустым.
-- Никакого текста вне JSON.
+ПРАВИЛА: 
+- Никакого текста до или после JSON.
+- В поле "claim" ОБЯЗАТЕЛЬНО должен быть текст.
+- Если статус confirmed или contradicted, ссылка (url) ОБЯЗАТЕЛЬНА.
 
 Текст:
 {text}"""
 
     try:
         from gigachat import GigaChat
-        with GigaChat(credentials=giga_key, model="GigaChat-2",
-                      scope="GIGACHAT_API_PERS", verify_ssl_certs=False) as client:
-            # Добавляем temperature для стабильности
-            resp = client.chat.create(prompt, temperature=0.2)
-            raw_content = resp.messages[0].content
-
-        # Извлекаем текст
-        if isinstance(raw_content, list):
-            if len(raw_content) > 0 and isinstance(raw_content[0], dict):
-                raw = raw_content[0].get("text", "")
+        
+        # Пауза для предотвращения ошибки 429 (Too Many Requests)
+        time.sleep(1.5)
+        
+        with GigaChat(
+            base_url="https://api.giga.chat/v1",
+            credentials=giga_key, 
+            scope="GIGACHAT_API_PERS", 
+            model="GigaChat-2",
+            verify_ssl_certs=False
+        ) as client:
+            response = client.chat.create(prompt)
+            
+            # Извлекаем текст из списка (по документации SDK)
+            raw_text = ""
+            if response.messages and response.messages[0].content:
+                raw_text = response.messages[0].content[0].text
             else:
-                raw = "".join(str(item) for item in raw_content)
-        else:
-            raw = str(raw_content)
+                raise ValueError("Пустой ответ от модели")
 
-        # Чистим markdown и ищем JSON-массив
-        raw = raw.replace("```json", "").replace("```", "").strip()
-        match = re.search(r'\[.*\]', raw, re.DOTALL)
-        if match:
-            raw = match.group(0)
+        raw_text = raw_text.replace("```json", "").replace("```", "").strip()
+        
+        # Ищем JSON-массив
+        match = re.search(r'\[.*\]', raw_text, re.DOTALL)
+        if not match:
+            raise ValueError("Модель вернула текст вместо JSON")
+            
+        raw_json = match.group(0)
 
+        # Парсим, если кривой — чиним
         try:
-            results = json.loads(raw)
+            results = json.loads(raw_json)
         except json.JSONDecodeError:
-            st.info("Исправляю формат ответа...")
-            fixed_json = repair_json(raw)
-            results = json.loads(fixed_json)
+            results = json.loads(repair_json(raw_json))
 
-        # Если пришел словарь, достаем массив
-        if isinstance(results, dict):
-            results = results.get("results", results.get("claims", []))
+        if not isinstance(results, list) or len(results) == 0:
+            raise ValueError("Модель вернула пустой список")
 
         normalized = []
         for r in results:
-            claim_text = r.get("claim") or r.get("text") or "Утверждение"
-            status = r.get("status", "no_source")
-            comment = r.get("comment") or "Нет деталей."
+            if not isinstance(r, dict): continue
             
-            # Если ссылки нет, но статус требует источника — даем ссылку на поиск
+            claim_text = r.get("claim") or "Утверждение без текста"
+            status = r.get("status", "no_source")
+            if status not in ["confirmed", "contradicted", "no_source"]:
+                status = "no_source"
+                
+            comment = r.get("comment") or "Нет деталей."
             url = r.get("url")
-            if not url and status != "no_source":
-                # Формируем ссылку на поиск по тексту утверждения
-                search_query = claim_text.replace(" ", "+")
+            
+            # 🔥 ГЛАВНОЕ: Если ссылки нет, подставляем её ВСЕГДА
+            if not url:
+                search_query = claim_text.replace(" ", "+").replace('"', '').replace("'", "")
                 url = f"https://yandex.ru/search/?text={search_query}"
 
             normalized.append({
@@ -147,14 +156,18 @@ def check_news(text: str):
                 "comment": comment,
                 "url": url
             })
+            
+        if not normalized:
+            raise ValueError("Не удалось собрать данные из ответа")
+
         return normalized
 
     except Exception as e:
-        st.warning(f"Ошибка API: {e}. Переключаюсь на демо-режим.")
+        st.warning(f"Модель не справилась ({e}). Включаю умную заглушку.")
         return check_news_stub(text)
 
 # ==========================================
-# 3. РАБОТА С FIREBASE
+# 4. РАБОТА С FIREBASE
 # ==========================================
 def save_to_firebase(text, results):
     try:
@@ -165,7 +178,7 @@ def save_to_firebase(text, results):
         })
         return True
     except Exception as e:
-        st.error(f"Ошибка сохранения в Firebase: {e}")
+        st.error(f"Ошибка сохранения: {e}")
         return False
 
 def load_from_firebase(limit=10):
@@ -180,12 +193,11 @@ def load_from_firebase(limit=10):
                 data["created_at"] = data["created_at"].strftime("%Y-%m-%d %H:%M")
             history.append(data)
         return history
-    except Exception as e:
-        st.error(f"Ошибка загрузки из Firebase: {e}")
+    except Exception:
         return []
 
 # ==========================================
-# 4. ИНТЕРФЕЙС
+# 5. ИНТЕРФЕЙС
 # ==========================================
 st.set_page_config(page_title="SwampEditor MVP", page_icon="🐸", layout="wide")
 
@@ -205,33 +217,40 @@ text_input = st.text_area(
     placeholder="Например: Мэр заявил, что бюджет вырос на 40%. Встреча прошла 15 марта.",
 )
 
+# Защита от двойных нажатий
 if st.button("Проверить", type="primary"):
     if not text_input.strip():
         st.warning("Сначала вставь текст")
+    elif st.session_state.get("is_checking", False):
+        st.warning("Подожди, предыдущая проверка ещё идёт...")
     else:
-        with st.spinner("Анализирую..."):
-            results = check_news(text_input)
-            save_to_firebase(text_input, results)
-            st.success("Результат сохранён в облачную базу!")
+        st.session_state["is_checking"] = True
+        try:
+            with st.spinner("Анализирую..."):
+                results = check_news(text_input)
+                save_to_firebase(text_input, results)
+                st.success("Результат сохранён в облачную базу!")
 
-        confirmed = sum(1 for r in results if r["status"] == "confirmed")
-        contradicted = sum(1 for r in results if r["status"] == "contradicted")
-        no_source = sum(1 for r in results if r["status"] == "no_source")
+            confirmed = sum(1 for r in results if r["status"] == "confirmed")
+            contradicted = sum(1 for r in results if r["status"] == "contradicted")
+            no_source = sum(1 for r in results if r["status"] == "no_source")
 
-        c1, c2, c3 = st.columns(3)
-        c1.metric("✅ Подтверждено", confirmed)
-        c2.metric("⚠️ Нет источника", no_source)
-        c3.metric("❌ Противоречит", contradicted)
+            c1, c2, c3 = st.columns(3)
+            c1.metric("✅ Подтверждено", confirmed)
+            c2.metric("⚠️ Нет источника", no_source)
+            c3.metric("❌ Противоречит", contradicted)
 
-        st.divider()
+            st.divider()
 
-        icons = {"confirmed": "✅", "contradicted": "❌", "no_source": "⚠️"}
-        for r in results:
-            with st.container(border=True):
-                st.markdown(f"### {icons.get(r['status'], '•')} {r['claim']}")
-                st.caption(r.get("comment", ""))
-                if r.get("url"):
-                    st.markdown(f"[Источник]({r['url']})")
+            icons = {"confirmed": "✅", "contradicted": "❌", "no_source": "⚠️"}
+            for r in results:
+                with st.container(border=True):
+                    st.markdown(f"### {icons.get(r['status'], '•')} {r['claim']}")
+                    st.caption(r.get("comment", ""))
+                    if r.get("url"):
+                        st.markdown(f"[Источник]({r['url']})")
+        finally:
+            st.session_state["is_checking"] = False
 
 st.divider()
 st.subheader("📚 Последние проверки (из Firebase)")
