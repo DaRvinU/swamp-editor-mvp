@@ -5,12 +5,13 @@ import re
 import random
 import firebase_admin
 from firebase_admin import credentials, firestore
+from pydantic import BaseModel, Field
+from typing import List, Optional
 
 # ==========================================
-# 1. ИНИЦИАЛИЗАЦИЯ FIREBASE (безопасно для повторных запусков)
+# 1. ИНИЦИАЛИЗАЦИЯ FIREBASE
 # ==========================================
 def _get_firebase_cred():
-    """Возвращает credentials: сначала из secrets (Streamlit Cloud), потом из файла (Colab)."""
     try:
         if "firebase" in st.secrets:
             cred_dict = dict(st.secrets["firebase"])
@@ -30,17 +31,28 @@ try:
 except ValueError:
     cred = _get_firebase_cred()
     if cred is None:
-        st.error("Firebase не инициализирован: нет ни секретов, ни файла firebase-key.json")
+        st.error("Firebase не инициализирован.")
         st.stop()
     firebase_admin.initialize_app(cred)
 
 db = firestore.client()
 
 # ==========================================
-# 2. ФУНКЦИЯ ПРОВЕРКИ (GIGACHAT + ЗАГЛУШКА)
+# 2. СХЕМА ОТВЕТА ДЛЯ GIGACHAT (Pydantic)
+# ==========================================
+class ClaimResult(BaseModel):
+    claim: str = Field(description="Текст утверждения из новости")
+    status: str = Field(description="Статус: confirmed, contradicted или no_source")
+    comment: str = Field(description="Короткое пояснение, почему такой статус")
+    url: Optional[str] = Field(default=None, description="Ссылка на источник, если есть")
+
+class CheckResponse(BaseModel):
+    results: List[ClaimResult] = Field(description="Список проверенных утверждений")
+
+# ==========================================
+# 3. ПРОВЕРКА НОВОСТЕЙ
 # ==========================================
 def check_news_stub(text: str):
-    """Заглушка, если API не доступен."""
     sentences = [s.strip() for s in re.split(r'[.!?]', text) if s.strip()]
     results = []
     for i, sentence in enumerate(sentences[:6]):
@@ -61,13 +73,10 @@ def check_news_stub(text: str):
             comment = "Найдено расхождение с открытыми источниками (демо-режим)."
             url = "https://www.rbc.ru"
 
-        results.append({
-            "claim": sentence, "status": status, "comment": comment, "url": url
-        })
+        results.append({"claim": sentence, "status": status, "comment": comment, "url": url})
     return results
 
 def check_news(text: str):
-    """Реальная проверка через GigaChat API с откатом на заглушку."""
     try:
         giga_key = st.secrets["GIGA_KEY"]
     except Exception:
@@ -78,57 +87,46 @@ def check_news(text: str):
         return check_news_stub(text)
 
     prompt = f"""Ты фактчекер новостей. Из текста ниже выпиши 3-5 проверяемых утверждений.
-Верни ТОЛЬКО JSON-массив без пояснений, строго такого вида:
-[{{"claim":"текст утверждения","status":"confirmed|contradicted|no_source","comment":"1-2 предложения почему","url":null}}]
+Для каждого определи статус (confirmed, contradicted, no_source) и напиши короткий комментарий.
 
 Текст:
 {text}"""
 
     try:
         from gigachat import GigaChat
+        
         with GigaChat(credentials=giga_key, model="GigaChat-2",
                       scope="GIGACHAT_API_PERS", verify_ssl_certs=False) as client:
-            resp = client.chat.create({"messages":[{"role":"user","content":prompt}], "temperature":0})
-            raw_content = resp.messages[0].content
-
-        # GigaChat иногда возвращает список вместо строки
-        if isinstance(raw_content, list):
-            if len(raw_content) > 0 and isinstance(raw_content[0], dict):
-                raw = raw_content[0].get("text", "")
-            else:
-                raw = "".join(str(item) for item in raw_content)
-        else:
-            raw = str(raw_content)
-
-        # Чистим markdown-обертки
-        raw = raw.replace("```json", "").replace("```", "").strip()
-
-        # Пытаемся найти JSON-массив в тексте, если модель добавила лишние слова
-        match = re.search(r'\[.*\]', raw, re.DOTALL)
-        if match:
-            raw = match.group(0)
-
-        results = json.loads(raw)
-
-        if isinstance(results, dict):
-            results = results.get("results", results.get("claims", []))
-
-        normalized = []
-        for r in results:
-            normalized.append({
-                "claim": r.get("claim", "Без названия"),
-                "status": r.get("status", "no_source"),
-                "comment": r.get("comment", "Нет комментария"),
-                "url": r.get("url")
-            })
-        return normalized
+            
+            # Используем chat_parse для автоматической валидации по схеме
+            completion, parsed_response = client.chat_parse(
+                messages=[{"role": "user", "content": prompt}],
+                response_format=CheckResponse,
+                strict=True,
+                temperature=0
+            )
+            
+            results = []
+            for item in parsed_response.results:
+                results.append({
+                    "claim": item.claim,
+                    "status": item.status,
+                    "comment": item.comment,
+                    "url": item.url
+                })
+            
+            if not results:
+                st.warning("GigaChat вернул пустой список. Переключаюсь на демо.")
+                return check_news_stub(text)
+                
+            return results
 
     except Exception as e:
         st.warning(f"GigaChat недоступен (Ошибка: {e}). Переключаюсь на демо-режим.")
         return check_news_stub(text)
 
 # ==========================================
-# 3. РАБОТА С FIREBASE
+# 4. РАБОТА С FIREBASE
 # ==========================================
 def save_to_firebase(text, results):
     try:
@@ -159,7 +157,7 @@ def load_from_firebase(limit=10):
         return []
 
 # ==========================================
-# 4. ИНТЕРФЕЙС
+# 5. ИНТЕРФЕЙС
 # ==========================================
 st.set_page_config(page_title="SwampEditor MVP", page_icon="🐸", layout="wide")
 
