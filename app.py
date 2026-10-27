@@ -91,20 +91,6 @@ def call_gigachat(system_prompt: str, user_prompt: str, retries: int = 2) -> str
             time.sleep(2 * (attempt + 1))
     raise last_err
 
-def parse_json_array(raw: str):
-    raw = raw.replace("```json", "").replace("```", "").strip()
-    match = re.search(r"\[.*\]", raw, re.DOTALL)
-    if not match:
-        raise ValueError("Модель вернула текст вместо JSON")
-    chunk = match.group(0)
-    try:
-        data = json.loads(chunk)
-    except json.JSONDecodeError:
-        data = json.loads(repair_json(chunk))
-    if not isinstance(data, list) or not data:
-        raise ValueError("Модель вернула пустой список")
-    return data
-
 # ==========================================
 # 4. ПОИСК ИСТОЧНИКОВ (DuckDuckGo, без ключей)
 # ==========================================
@@ -129,7 +115,7 @@ def search_evidence(query: str, max_results: int = 4):
         return []
 
 # ==========================================
-# 5. ПАЙПЛАЙН ПРОВЕРКИ
+# 5. ПАЙПЛАЙН ПРОВЕРКИ (НОВЫЕ ФУНКЦИИ)
 # ==========================================
 EXTRACT_SYSTEM = "Ты — редактор-фактчекер. Отвечай только валидным JSON без пояснений и без markdown."
 VERIFY_SYSTEM = (
@@ -137,21 +123,42 @@ VERIFY_SYSTEM = (
     "не используй собственные знания для подтверждения. Отвечай только валидным JSON."
 )
 
-def extract_claims(text: str):
+def parse_json_array(raw):
+    raw = (raw or "").replace("```json", "").replace("```", "").strip()
+    match = re.search(r"\[.*\]", raw, re.DOTALL)
+    if not match:
+        raise ValueError("Модель вернула текст вместо JSON")
+    chunk = match.group(0)
+    try:
+        data = json.loads(chunk)
+    except json.JSONDecodeError:
+        data = json.loads(repair_json(chunk))
+    if not isinstance(data, list):
+        raise ValueError("Модель вернула не список")
+    return data
+
+def extract_claims(text):
     prompt = (
         f"Выдели из текста до {MAX_CLAIMS} проверяемых утверждений "
         "(цифры, даты, имена, события, цитаты).\n"
+        "Если текст короткий — верни его целиком как одно утверждение.\n"
         'Верни JSON-массив строк, например: ["утверждение 1", "утверждение 2"].\n\n'
         f"Текст:\n{text}"
     )
-    data = parse_json_array(call_gigachat(EXTRACT_SYSTEM, prompt))
     claims = []
-    for item in data:
-        if isinstance(item, str):
-            claims.append(item.strip())
-        elif isinstance(item, dict) and item.get("claim"):
-            claims.append(str(item["claim"]).strip())
-    claims = [c for c in claims if c][:MAX_CLAIMS]
+    for attempt in range(2):
+        data = parse_json_array(call_gigachat(EXTRACT_SYSTEM, prompt))
+        for item in data:
+            if isinstance(item, str):
+                claims.append(item.strip())
+            elif isinstance(item, dict) and item.get("claim"):
+                claims.append(str(item["claim"]).strip())
+        claims = [c for c in claims if c][:MAX_CLAIMS]
+        if claims:
+            break
+
+    if not claims:
+        claims = [s.strip() for s in re.split(r"[.!?\n]", text) if len(s.strip()) > 3][:MAX_CLAIMS]
     if not claims:
         raise ValueError("Не удалось выделить утверждения")
     return claims
@@ -177,14 +184,19 @@ def verify_claims(claims, evidence):
         "- confirmed — только если фрагмент прямо подтверждает утверждение.\n"
         "- contradicted — только если фрагмент прямо ему противоречит.\n"
         "- Если данных недостаточно или источников нет — no_source.\n"
-        "- Поле source — номер источника из списка, никаких выдуманных ссылок.\n\n"
+        "- Поле source — ТОЛЬКО число, номер источника из списка, например 1.\n\n"
         + "\n\n".join(blocks)
     )
-    return parse_json_array(call_gigachat(VERIFY_SYSTEM, prompt))
+
+    verdicts = []
+    for attempt in range(2):
+        verdicts = parse_json_array(call_gigachat(VERIFY_SYSTEM, prompt))
+        if verdicts:
+            break
+    return verdicts
 
 # ==========================================
 # 5a. СОВМЕСТИМЫЙ ВЫЗОВ GIGACHAT
-# Работает и с новым SDK (client.chat.create), и со старым (client.chat(Chat)).
 # ==========================================
 GIGA_BASE_URL = _secret("GIGA_BASE_URL") # необязательно, например https://api.giga.chat/v1
 
@@ -263,7 +275,7 @@ def check_news_stub(text: str):
     return results
 
 # ==========================================
-# 6. ОСНОВНАЯ ПРОВЕРКА
+# 6. ОСНОВНАЯ ПРОВЕРКА (ОСТАВЛЕНА КАК ЕСТЬ)
 # ==========================================
 STATUS_ALIASES = [
     ("no_source", "no_source"),
@@ -381,6 +393,7 @@ def check_news(text):
         st.error(f"Ошибка GigaChat: {type(e).__name__}: {e}")
         st.caption("Показан демо-режим без AI. Проверьте GIGA_KEY, GIGA_SCOPE, GIGA_MODEL и версию gigachat.")
         return check_news_stub(text), "demo"
+
 # ==========================================
 # 7. FIREBASE: СОХРАНЕНИЕ И ИСТОРИЯ
 # ==========================================
