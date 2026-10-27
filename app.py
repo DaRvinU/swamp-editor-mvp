@@ -50,24 +50,73 @@ class CheckResult(BaseModel):
 # ==========================================
 # 3. ПРОВЕРКА НОВОСТЕЙ (Structured Output)
 # ==========================================
-def check_news_stub(text: str):
-    sentences = [s.strip() for s in re.split(r'[.!?]', text) if s.strip()]
-    results = []
-    for i, sentence in enumerate(sentences[:6]):
-        has_number = bool(re.search(r'\d+', sentence))
-        has_claim_word = any(w in sentence.lower() for w in ['первый', 'самый', 'вырос', 'упал', 'процент', 'миллион', 'умерла', 'умер'])
-        
-        if has_number or has_claim_word:
-            status = "contradicted"
-            comment = "Требует проверки: обнаружены числовые данные или громкие заявления."
-            url = f"https://yandex.ru/search/?text={sentence.replace(' ', '+')}"
-        else:
-            status = "confirmed"
-            comment = "Утверждение не содержит явных фактических рисков."
-            url = "https://www.interfax.ru"
+def check_news(text: str):
+    try:
+        giga_key = st.secrets["GIGA_KEY"]
+    except Exception:
+        giga_key = os.environ.get("GIGA_KEY")
+    
+    if not giga_key:
+        st.warning("Ключ GigaChat не найден. Работает демо-режим.")
+        return check_news_stub(text)
 
-        results.append({"claim": sentence, "status": status, "comment": comment, "url": url})
-    return results
+    prompt = f"""Ты — строгий фактчекер. Проанализируй текст ниже.
+Выпиши 3-5 проверяемых утверждений и для каждого определи статус.
+
+Текст:
+{text}"""
+
+    try:
+        from gigachat import GigaChat
+        from pydantic import BaseModel, Field
+        from typing import List, Optional
+
+        # Схема (можно оставить ту же)
+        class ClaimItem(BaseModel):
+            claim: str = Field(description="Текст утверждения")
+            status: str = Field(description="confirmed, contradicted или no_source")
+            comment: str = Field(description="Пояснение")
+            url: Optional[str] = Field(default=None, description="Ссылка или null")
+
+        class CheckResult(BaseModel):
+            results: List[ClaimItem]
+
+        # ИСПОЛЬЗУЕМ chat_parse — официальный хелпер
+        with GigaChat(
+            credentials=giga_key,
+            model="GigaChat-2-Max",  # Важно: Max поддерживает схему
+            scope="GIGACHAT_API_PERS",
+            verify_ssl_certs=False,
+            base_url="https://api.giga.chat/v2",  # Явно указываем v2
+        ) as client:
+            completion, parsed = client.chat_parse(
+                prompt,
+                response_format=CheckResult,
+                strict=True,
+            )
+
+        # parsed — это уже объект CheckResult
+        results = []
+        for item in parsed.results:
+            url = item.url
+            if not url and item.status != "no_source":
+                url = f"https://yandex.ru/search/?text={item.claim.replace(' ', '+')}"
+            
+            results.append({
+                "claim": item.claim,
+                "status": item.status,
+                "comment": item.comment,
+                "url": url,
+            })
+
+        if not results:
+            raise ValueError("Модель вернула пустой список")
+
+        return results
+
+    except Exception as e:
+        st.warning(f"GigaChat (structured) error: {e}. Включаю заглушку.")
+        return check_news_stub(text)
 
 def check_news(text: str):
     try:
