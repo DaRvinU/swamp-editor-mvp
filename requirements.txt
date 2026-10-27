@@ -3,3 +3,4 @@ gigachat
 firebase-admin
 json-repair
 ddgs
+duckduckgo-search
