@@ -3,6 +3,7 @@ import json
 import os
 import re
 import random
+import time
 import firebase_admin
 from firebase_admin import credentials, firestore
 from json_repair import repair_json
@@ -35,7 +36,7 @@ except ValueError:
 db = firestore.client()
 
 # ==========================================
-# 2. ЗАГЛУШКА (классная, с Яндексом)
+# 2. УМНАЯ ЗАГЛУШКА (с Яндексом)
 # ==========================================
 def check_news_stub(text: str):
     sentences = [s.strip() for s in re.split(r'[.!?]', text) if s.strip()]
@@ -62,7 +63,7 @@ def check_news_stub(text: str):
     return results
 
 # ==========================================
-# 3. ПРОВЕРКА НОВОСТЕЙ (GigaChat по официальному SDK)
+# 3. ПРОВЕРКА НОВОСТЕЙ (GigaChat)
 # ==========================================
 def check_news(text: str):
     try:
@@ -94,18 +95,20 @@ def check_news(text: str):
 
     try:
         from gigachat import GigaChat
-        # Инициализация строго по документации
+        
+        # Пауза для предотвращения ошибки 429 (Too Many Requests)
+        time.sleep(1)
+        
         with GigaChat(
             base_url="https://api.giga.chat/v1",
             credentials=giga_key, 
             scope="GIGACHAT_API_PERS", 
-            model="GigaChat-2", 
+            model="GigaChat-2",  # Явно указываем модель
             verify_ssl_certs=False
         ) as client:
             response = client.chat.create(prompt)
             
-            # В официальном SDK ответ лежит в списке content
-            # response.messages[0].content[0].text
+            # В новой версии SDK текст лежит в списке content
             raw_text = ""
             if response.messages and response.messages[0].content:
                 raw_text = response.messages[0].content[0].text
@@ -216,33 +219,40 @@ text_input = st.text_area(
     placeholder="Например: Мэр заявил, что бюджет вырос на 40%. Встреча прошла 15 марта.",
 )
 
+# Защита от двойных нажатий (предотвращает ошибку 429)
 if st.button("Проверить", type="primary"):
     if not text_input.strip():
         st.warning("Сначала вставь текст")
+    elif st.session_state.get("is_checking", False):
+        st.warning("Подожди, предыдущая проверка ещё идёт...")
     else:
-        with st.spinner("Анализирую..."):
-            results = check_news(text_input)
-            save_to_firebase(text_input, results)
-            st.success("Результат сохранён в облачную базу!")
+        st.session_state["is_checking"] = True
+        try:
+            with st.spinner("Анализирую..."):
+                results = check_news(text_input)
+                save_to_firebase(text_input, results)
+                st.success("Результат сохранён в облачную базу!")
 
-        confirmed = sum(1 for r in results if r["status"] == "confirmed")
-        contradicted = sum(1 for r in results if r["status"] == "contradicted")
-        no_source = sum(1 for r in results if r["status"] == "no_source")
+            confirmed = sum(1 for r in results if r["status"] == "confirmed")
+            contradicted = sum(1 for r in results if r["status"] == "contradicted")
+            no_source = sum(1 for r in results if r["status"] == "no_source")
 
-        c1, c2, c3 = st.columns(3)
-        c1.metric("✅ Подтверждено", confirmed)
-        c2.metric("⚠️ Нет источника", no_source)
-        c3.metric("❌ Противоречит", contradicted)
+            c1, c2, c3 = st.columns(3)
+            c1.metric("✅ Подтверждено", confirmed)
+            c2.metric("⚠️ Нет источника", no_source)
+            c3.metric("❌ Противоречит", contradicted)
 
-        st.divider()
+            st.divider()
 
-        icons = {"confirmed": "✅", "contradicted": "❌", "no_source": "⚠️"}
-        for r in results:
-            with st.container(border=True):
-                st.markdown(f"### {icons.get(r['status'], '•')} {r['claim']}")
-                st.caption(r.get("comment", ""))
-                if r.get("url"):
-                    st.markdown(f"[Источник]({r['url']})")
+            icons = {"confirmed": "✅", "contradicted": "❌", "no_source": "⚠️"}
+            for r in results:
+                with st.container(border=True):
+                    st.markdown(f"### {icons.get(r['status'], '•')} {r['claim']}")
+                    st.caption(r.get("comment", ""))
+                    if r.get("url"):
+                        st.markdown(f"[Источник]({r['url']})")
+        finally:
+            st.session_state["is_checking"] = False
 
 st.divider()
 st.subheader("📚 Последние проверки (из Firebase)")
