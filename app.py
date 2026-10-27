@@ -5,8 +5,7 @@ import re
 import random
 import firebase_admin
 from firebase_admin import credentials, firestore
-from pydantic import BaseModel, Field
-from typing import List, Optional
+from json_repair import repair_json  # Библиотека для починки JSON
 
 # ==========================================
 # 1. ИНИЦИАЛИЗАЦИЯ FIREBASE
@@ -38,19 +37,7 @@ except ValueError:
 db = firestore.client()
 
 # ==========================================
-# 2. СХЕМА ОТВЕТА ДЛЯ GIGACHAT (Pydantic)
-# ==========================================
-class ClaimResult(BaseModel):
-    claim: str = Field(description="Текст утверждения из новости")
-    status: str = Field(description="Статус: confirmed, contradicted или no_source")
-    comment: str = Field(description="Короткое пояснение, почему такой статус")
-    url: Optional[str] = Field(default=None, description="Ссылка на источник, если есть")
-
-class CheckResponse(BaseModel):
-    results: List[ClaimResult] = Field(description="Список проверенных утверждений")
-
-# ==========================================
-# 3. ПРОВЕРКА НОВОСТЕЙ
+# 2. ПРОВЕРКА НОВОСТЕЙ (GigaChat)
 # ==========================================
 def check_news_stub(text: str):
     sentences = [s.strip() for s in re.split(r'[.!?]', text) if s.strip()]
@@ -86,47 +73,70 @@ def check_news(text: str):
         st.warning("Ключ GigaChat не найден. Работает демо-режим.")
         return check_news_stub(text)
 
-    prompt = f"""Ты фактчекер новостей. Из текста ниже выпиши 3-5 проверяемых утверждений.
-Для каждого определи статус (confirmed, contradicted, no_source) и напиши короткий комментарий.
+    # Очень строгий промпт, чтобы модель не добавляла лишнего текста
+    prompt = f"""Ты — фактчекер новостей. Твоя задача — проанализировать текст и выдать результат СТРОГО в формате JSON-массива.
 
-Текст:
+Каждый элемент массива должен быть объектом с ключами:
+- "claim": текст утверждения (строка)
+- "status": один из вариантов "confirmed", "contradicted", "no_source"
+- "comment": краткое пояснение (строка)
+- "url": ссылка на источник или null
+
+Никакого другого текста, только JSON. Начинай ответ с символа [ и заканчивай символом ].
+
+Текст для проверки:
 {text}"""
 
     try:
         from gigachat import GigaChat
-        
         with GigaChat(credentials=giga_key, model="GigaChat-2",
                       scope="GIGACHAT_API_PERS", verify_ssl_certs=False) as client:
-            
-            # Используем chat_parse для автоматической валидации по схеме
-            completion, parsed_response = client.chat_parse(
-                messages=[{"role": "user", "content": prompt}],
-                response_format=CheckResponse,
-                strict=True,
-                temperature=0
-            )
-            
-            results = []
-            for item in parsed_response.results:
-                results.append({
-                    "claim": item.claim,
-                    "status": item.status,
-                    "comment": item.comment,
-                    "url": item.url
-                })
-            
-            if not results:
-                st.warning("GigaChat вернул пустой список. Переключаюсь на демо.")
-                return check_news_stub(text)
-                
-            return results
+            # ПРАВИЛЬНЫЙ ВЫЗОВ: промпт передаётся строкой
+            resp = client.chat.create(prompt)
+            raw_content = resp.messages[0].content
+
+        # Извлекаем текст
+        if isinstance(raw_content, list):
+            if len(raw_content) > 0 and isinstance(raw_content[0], dict):
+                raw = raw_content[0].get("text", "")
+            else:
+                raw = "".join(str(item) for item in raw_content)
+        else:
+            raw = str(raw_content)
+
+        # Чистим markdown и ищем JSON-массив
+        raw = raw.replace("```json", "").replace("```", "").strip()
+        match = re.search(r'\[.*\]', raw, re.DOTALL)
+        if match:
+            raw = match.group(0)
+
+        # Пытаемся распарсить, если падает — чиним
+        try:
+            results = json.loads(raw)
+        except json.JSONDecodeError:
+            st.info("JSON от AI был немного кривым. Автоматически исправляю...")
+            fixed_json = repair_json(raw)
+            results = json.loads(fixed_json)
+
+        if isinstance(results, dict):
+            results = results.get("results", results.get("claims", []))
+
+        normalized = []
+        for r in results:
+            normalized.append({
+                "claim": r.get("claim", "Без названия"),
+                "status": r.get("status", "no_source"),
+                "comment": r.get("comment", "Нет комментария"),
+                "url": r.get("url")
+            })
+        return normalized
 
     except Exception as e:
         st.warning(f"GigaChat недоступен (Ошибка: {e}). Переключаюсь на демо-режим.")
         return check_news_stub(text)
 
 # ==========================================
-# 4. РАБОТА С FIREBASE
+# 3. РАБОТА С FIREBASE
 # ==========================================
 def save_to_firebase(text, results):
     try:
@@ -157,7 +167,7 @@ def load_from_firebase(limit=10):
         return []
 
 # ==========================================
-# 5. ИНТЕРФЕЙС
+# 4. ИНТЕРФЕЙС
 # ==========================================
 st.set_page_config(page_title="SwampEditor MVP", page_icon="🐸", layout="wide")
 
