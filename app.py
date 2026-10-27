@@ -5,7 +5,7 @@ import re
 import random
 import firebase_admin
 from firebase_admin import credentials, firestore
-from json_repair import repair_json  # Библиотека для починки JSON
+from json_repair import repair_json
 
 # ==========================================
 # 1. ИНИЦИАЛИЗАЦИЯ FIREBASE
@@ -37,7 +37,7 @@ except ValueError:
 db = firestore.client()
 
 # ==========================================
-# 2. ПРОВЕРКА НОВОСТЕЙ (GigaChat)
+# 2. ПРОВЕРКА НОВОСТЕЙ (GigaChat + Заглушка)
 # ==========================================
 def check_news_stub(text: str):
     sentences = [s.strip() for s in re.split(r'[.!?]', text) if s.strip()]
@@ -73,27 +73,33 @@ def check_news(text: str):
         st.warning("Ключ GigaChat не найден. Работает демо-режим.")
         return check_news_stub(text)
 
-    # Очень строгий промпт, чтобы модель не добавляла лишнего текста
-    prompt = f"""Ты — строгий фактчекер новостей. Твоя задача — проанализировать текст и выдать результат СТРОГО в формате JSON-массива.
+    # Усиленный промпт: требуем ссылки и заполнение всех полей
+    prompt = f"""Ты — профессиональный фактчекер. Проанализируй текст ниже.
+Верни СТРОГО JSON-массив, где каждый элемент содержит ВСЕ 4 ключа:
+[
+  {{
+    "claim": "точная цитата или пересказ проверяемого утверждения из текста",
+    "status": "confirmed" | "contradicted" | "no_source",
+    "comment": "развернутое объяснение (1-2 предложения), почему выбран этот статус",
+    "url": "ссылка на авторитетный источник (Википедия, РБК, Интерфакс, официальный сайт) или null, если совсем нет"
+  }}
+]
 
-ПРАВИЛА ОПРЕДЕЛЕНИЯ СТАТУСА:
-1. Ставь "confirmed" (✅), если утверждение выглядит как общеизвестный факт, банальность или не содержит конкретных чисел/имён, которые можно проверить. Например: "Встреча прошла", "Мэр выступил", "Погода была хорошая".
-2. Ставь "contradicted" (❌), если в тексте есть внутреннее противоречие (например, "вырос на 40%", а потом "снизился") или если ты точно знаешь, что это ложь.
-3. Ставь "no_source" (⚠️) ТОЛЬКО если утверждение содержит конкретную цифру, дату или громкое заявление ("первый в истории", "самый большой"), но ты не можешь подтвердить это из своих знаний.
+ПРАВИЛА:
+- Если статус "confirmed" или "contradicted", ссылка (url) ОБЯЗАТЕЛЬНА. Если не знаешь точную ссылку, дай ссылку на поиск по этому факту в Google или Википедию.
+- Если статус "no_source", url может быть null.
+- Поле "claim" не может быть пустым.
+- Никакого текста вне JSON.
 
-Твоя цель — не просто поставить везде "no_source", а показать РАЗНЫЕ статусы, чтобы редактор увидел, какие места в тексте действительно опасны, а какие — безопасны.
-
-Никакого другого текста, только JSON. Начинай ответ с символа [ и заканчивай символом ].
-
-Текст для проверки:
+Текст:
 {text}"""
 
     try:
         from gigachat import GigaChat
         with GigaChat(credentials=giga_key, model="GigaChat-2",
                       scope="GIGACHAT_API_PERS", verify_ssl_certs=False) as client:
-            # ПРАВИЛЬНЫЙ ВЫЗОВ: промпт передаётся строкой
-            resp = client.chat.create(prompt)
+            # Добавляем temperature для стабильности
+            resp = client.chat.create(prompt, temperature=0.2)
             raw_content = resp.messages[0].content
 
         # Извлекаем текст
@@ -111,29 +117,40 @@ def check_news(text: str):
         if match:
             raw = match.group(0)
 
-        # Пытаемся распарсить, если падает — чиним
         try:
             results = json.loads(raw)
         except json.JSONDecodeError:
-            st.info("JSON от AI был немного кривым. Автоматически исправляю...")
+            st.info("Исправляю формат ответа...")
             fixed_json = repair_json(raw)
             results = json.loads(fixed_json)
 
+        # Если пришел словарь, достаем массив
         if isinstance(results, dict):
             results = results.get("results", results.get("claims", []))
 
         normalized = []
         for r in results:
+            claim_text = r.get("claim") or r.get("text") or "Утверждение"
+            status = r.get("status", "no_source")
+            comment = r.get("comment") or "Нет деталей."
+            
+            # Если ссылки нет, но статус требует источника — даем ссылку на поиск
+            url = r.get("url")
+            if not url and status != "no_source":
+                # Формируем ссылку на поиск по тексту утверждения
+                search_query = claim_text.replace(" ", "+")
+                url = f"https://yandex.ru/search/?text={search_query}"
+
             normalized.append({
-                "claim": r.get("claim", "Без названия"),
-                "status": r.get("status", "no_source"),
-                "comment": r.get("comment", "Нет комментария"),
-                "url": r.get("url")
+                "claim": claim_text,
+                "status": status,
+                "comment": comment,
+                "url": url
             })
         return normalized
 
     except Exception as e:
-        st.warning(f"GigaChat недоступен (Ошибка: {e}). Переключаюсь на демо-режим.")
+        st.warning(f"Ошибка API: {e}. Переключаюсь на демо-режим.")
         return check_news_stub(text)
 
 # ==========================================
