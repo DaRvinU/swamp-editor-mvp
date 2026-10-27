@@ -92,30 +92,32 @@ def call_gigachat(system_prompt: str, user_prompt: str, retries: int = 2) -> str
     raise last_err
 
 # ==========================================
-# 4. ПОИСК ИСТОЧНИКОВ (DuckDuckGo, без ключей)
+# 4. ПОИСК ИСТОЧНИКОВ (НОВАЯ ВЕРСИЯ)
 # ==========================================
-def search_evidence(query: str, max_results: int = 4):
+def search_evidence(query, max_results=4):
+    words = query.split()
+    short_query = " ".join(words[:15])
     try:
         try:
             from ddgs import DDGS
         except ImportError:
             from duckduckgo_search import DDGS
         with DDGS() as d:
-            hits = list(d.text(query, region="ru-ru", max_results=max_results))
-            return [
-                {
-                    "title": h.get("title", ""),
-                    "url": h.get("href", ""),
-                    "snippet": (h.get("body") or "")[:400],
-                }
-                for h in hits
-                if h.get("href")
-            ]
+            hits = list(d.text(short_query, region="ru-ru", max_results=max_results))
+        return [
+            {
+                "title": h.get("title", ""),
+                "url": h.get("href", ""),
+                "snippet": (h.get("body") or "")[:400],
+            }
+            for h in hits
+            if h.get("href")
+        ]
     except Exception:
         return []
 
 # ==========================================
-# 5. ПАЙПЛАЙН ПРОВЕРКИ (НОВЫЕ ФУНКЦИИ)
+# 5. ПАЙПЛАЙН ПРОВЕРКИ
 # ==========================================
 EXTRACT_SYSTEM = "Ты — редактор-фактчекер. Отвечай только валидным JSON без пояснений и без markdown."
 VERIFY_SYSTEM = (
@@ -137,31 +139,17 @@ def parse_json_array(raw):
         raise ValueError("Модель вернула не список")
     return data
 
+# НОВАЯ ВЕРСИЯ extract_claims (разбивает по предложениям, без AI)
 def extract_claims(text):
-    prompt = (
-        f"Выдели из текста до {MAX_CLAIMS} проверяемых утверждений "
-        "(цифры, даты, имена, события, цитаты).\n"
-        "Если текст короткий — верни его целиком как одно утверждение.\n"
-        'Верни JSON-массив строк, например: ["утверждение 1", "утверждение 2"].\n\n'
-        f"Текст:\n{text}"
-    )
+    parts = re.split(r"(?<=[.!?])\s+|\n+", text)
     claims = []
-    for attempt in range(2):
-        data = parse_json_array(call_gigachat(EXTRACT_SYSTEM, prompt))
-        for item in data:
-            if isinstance(item, str):
-                claims.append(item.strip())
-            elif isinstance(item, dict) and item.get("claim"):
-                claims.append(str(item["claim"]).strip())
-        claims = [c for c in claims if c][:MAX_CLAIMS]
-        if claims:
-            break
-
-    if not claims:
-        claims = [s.strip() for s in re.split(r"[.!?\n]", text) if len(s.strip()) > 3][:MAX_CLAIMS]
-    if not claims:
-        raise ValueError("Не удалось выделить утверждения")
-    return claims
+    for p in parts:
+        p = p.strip(" .!?\t")
+        if len(p.split()) >= 3:
+            claims.append(p[:300])
+    if not claims and text.strip():
+        claims = [text.strip()[:300]]
+    return claims[:MAX_CLAIMS]
 
 def verify_claims(claims, evidence):
     blocks = []
@@ -275,7 +263,7 @@ def check_news_stub(text: str):
     return results
 
 # ==========================================
-# 6. ОСНОВНАЯ ПРОВЕРКА (ОСТАВЛЕНА КАК ЕСТЬ)
+# 6. ОСНОВНАЯ ПРОВЕРКА
 # ==========================================
 STATUS_ALIASES = [
     ("no_source", "no_source"),
@@ -442,8 +430,8 @@ with st.sidebar:
     st.write("MVP для проверки новостей перед публикацией.")
     st.divider()
     st.info(
-        "1) GigaChat выделяет проверяемые утверждения.\n\n"
-        "2) Система ищет по ним источники.\n\n"
+        "1) Система разбивает текст на предложения.\n\n"
+        "2) Ищет по ним источники.\n\n"
         "3) GigaChat сверяет утверждения только с найденными фрагментами.\n\n"
         "Финальное решение — за редактором."
     )
@@ -458,7 +446,7 @@ if st.button("Проверить", type="primary"):
     if not text_input.strip():
         st.warning("Сначала вставь текст")
     else:
-        with st.spinner("Выделяю утверждения, ищу источники, сверяю..."):
+        with st.spinner("Разбиваю текст, ищу источники, сверяю..."):
             results, mode = check_news(text_input)
 
         if mode == "demo":
@@ -477,6 +465,15 @@ if st.button("Проверить", type="primary"):
         c1.metric("✅ Подтверждено", confirmed)
         c2.metric("⚠️ Нет источника", no_source)
         c3.metric("❌ Противоречит", contradicted)
+
+        # --- НОВЫЙ БЛОК: ОБЩИЙ ВЕРДИКТ ---
+        if contradicted > 0:
+            st.error("❌ Общий вывод: в новости есть утверждения, противоречащие источникам.")
+        elif results and confirmed == len(results):
+            st.success("✅ Общий вывод: все утверждения подтверждены найденными источниками.")
+        else:
+            st.warning("⚠️ Общий вывод: часть утверждений не удалось подтвердить — нужна проверка редактора.")
+        # ---------------------------------
 
         st.divider()
 
