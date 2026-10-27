@@ -1,4 +1,4 @@
 streamlit
 firebase-admin
 gigachat
-pydantic
+json-repair
