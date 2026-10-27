@@ -265,8 +265,66 @@ def check_news_stub(text: str):
 # ==========================================
 # 6. ОСНОВНАЯ ПРОВЕРКА
 # ==========================================
-def check_news(text: str):
-    """Возвращает (results, mode), где mode — 'ai' или 'demo'."""
+STATUS_ALIASES = [
+    ("no_source", "no_source"),
+    ("no source", "no_source"),
+    ("нет источник", "no_source"),
+    ("не подтвержд", "no_source"),
+    ("unconfirmed", "no_source"),
+    ("not confirmed", "no_source"),
+    ("contradicted", "contradicted"),
+    ("противоречит", "contradicted"),
+    ("опроверг", "contradicted"),
+    ("неверно", "contradicted"),
+    ("false", "contradicted"),
+    ("confirmed", "confirmed"),
+    ("подтвержд", "confirmed"),
+    ("верно", "confirmed"),
+    ("true", "confirmed"),
+]
+
+def normalize_status(value):
+    s = str(value or "").strip().lower().replace("-", "_")
+    for key, status in STATUS_ALIASES:
+        if key in s:
+            return status
+    return "no_source"
+
+def parse_source_index(value, sources):
+    if value is None or not sources:
+        return None
+    if isinstance(value, list):
+        if not value:
+            return None
+        value = value[0]
+    if isinstance(value, (int, float)):
+        idx = int(value)
+    else:
+        text = str(value).strip()
+        for i, s in enumerate(sources):
+            if s.get("url") and s["url"] in text:
+                return i
+        m = re.search(r"\d+", text)
+        if not m:
+            return None
+        idx = int(m.group())
+    if 0 <= idx < len(sources):
+        return idx
+    if idx == len(sources):
+        return idx - 1
+    return None
+
+def best_matching_source(claim, sources):
+    words = set(re.findall(r"\w{4,}", claim.lower()))
+    best, best_score = None, 0
+    for i, s in enumerate(sources):
+        text = (s.get("title", "") + " " + s.get("snippet", "")).lower()
+        score = sum(1 for w in words if w[:5] in text)
+        if score > best_score:
+            best, best_score = i, score
+    return best
+
+def check_news(text):
     if not GIGA_KEY:
         st.warning("Ключ GIGA_KEY не найден в Secrets — работает демо-режим без AI.")
         return check_news_stub(text), "demo"
@@ -277,31 +335,26 @@ def check_news(text: str):
         verdicts = verify_claims(claims, evidence)
 
         by_id = {}
-        for v in verdicts:
-            if isinstance(v, dict):
-                try:
-                    by_id[int(v.get("id"))] = v
-                except (TypeError, ValueError):
-                    pass
+        for pos, v in enumerate(verdicts):
+            if not isinstance(v, dict):
+                continue
+            try:
+                by_id[int(re.search(r"\d+", str(v.get("id"))).group())] = v
+            except Exception:
+                by_id.setdefault(pos, v)
 
         results = []
         for i, claim in enumerate(claims):
             v = by_id.get(i, {})
             sources = evidence[i]
+            status = normalize_status(v.get("status"))
 
-            status = v.get("status")
-            if status not in ICONS:
-                status = "no_source"
+            idx = parse_source_index(v.get("source"), sources)
+            if idx is None and status != "no_source":
+                idx = best_matching_source(claim, sources)
 
-            url = None
-            try:
-                src_idx = int(v.get("source"))
-            except (TypeError, ValueError):
-                src_idx = None
-            if src_idx is not None and 0 <= src_idx < len(sources):
-                url = sources[src_idx]["url"]
+            url = sources[idx]["url"] if idx is not None else None
 
-            # Без реальной найденной ссылки не подтверждаем и не опровергаем
             if status != "no_source" and not url:
                 status = "no_source"
 
@@ -313,23 +366,21 @@ def check_news(text: str):
                     else "В найденных фрагментах недостаточно данных для вывода."
                 )
 
-            results.append(
-                {
-                    "claim": claim,
-                    "status": status,
-                    "comment": comment,
-                    "url": url,
-                    "search_url": yandex_link(claim),
-                    "sources": sources,
-                }
-            )
+            results.append({
+                "claim": claim,
+                "status": status,
+                "comment": comment,
+                "url": url,
+                "search_url": yandex_link(claim),
+                "sources": sources,
+                "raw_verdict": json.dumps(v, ensure_ascii=False),
+            })
         return results, "ai"
 
     except Exception as e:
         st.error(f"Ошибка GigaChat: {type(e).__name__}: {e}")
-        st.caption("Показан демо-режим без AI. Проверьте GIGA_KEY, GIGA_SCOPE, GIGA_MODEL и версию пакета gigachat.")
+        st.caption("Показан демо-режим без AI. Проверьте GIGA_KEY, GIGA_SCOPE, GIGA_MODEL и версию gigachat.")
         return check_news_stub(text), "demo"
-
 # ==========================================
 # 7. FIREBASE: СОХРАНЕНИЕ И ИСТОРИЯ
 # ==========================================
