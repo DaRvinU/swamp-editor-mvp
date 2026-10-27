@@ -5,7 +5,8 @@ import re
 import random
 import firebase_admin
 from firebase_admin import credentials, firestore
-from json_repair import repair_json
+from pydantic import BaseModel, Field
+from typing import List, Optional
 
 # ==========================================
 # 1. ИНИЦИАЛИЗАЦИЯ FIREBASE
@@ -35,7 +36,19 @@ except ValueError:
 db = firestore.client()
 
 # ==========================================
-# 2. ЗАГЛУШКА
+# 2. СХЕМА ДЛЯ СТРОГОГО ВЫВОДА (Pydantic)
+# ==========================================
+class ClaimItem(BaseModel):
+    claim: str = Field(description="Текст утверждения из новости")
+    status: str = Field(description="Статус: confirmed, contradicted или no_source")
+    comment: str = Field(description="Пояснение, почему такой статус")
+    url: Optional[str] = Field(default=None, description="Ссылка на источник или null")
+
+class CheckResult(BaseModel):
+    results: List[ClaimItem] = Field(description="Список проверенных утверждений")
+
+# ==========================================
+# 3. ПРОВЕРКА НОВОСТЕЙ (Structured Output)
 # ==========================================
 def check_news_stub(text: str):
     sentences = [s.strip() for s in re.split(r'[.!?]', text) if s.strip()]
@@ -52,18 +65,10 @@ def check_news_stub(text: str):
             status = "confirmed"
             comment = "Утверждение не содержит явных фактических рисков."
             url = "https://www.interfax.ru"
-            
-        if i == 0 and not (has_number or has_claim_word):
-            status = "confirmed"
-            comment = "Проверено. Факт соответствует действительности."
-            url = "https://www.rbc.ru"
 
         results.append({"claim": sentence, "status": status, "comment": comment, "url": url})
     return results
 
-# ==========================================
-# 3. ПРОВЕРКА НОВОСТЕЙ (GigaChat)
-# ==========================================
 def check_news(text: str):
     try:
         giga_key = st.secrets["GIGA_KEY"]
@@ -74,25 +79,34 @@ def check_news(text: str):
         st.warning("Ключ GigaChat не найден. Работает демо-режим.")
         return check_news_stub(text)
 
-    # Жесткий промпт
-    prompt = f"""Ты — фактчекер. Твоя задача — проанализировать текст.
-Твой ответ должен быть ТОЛЬКО валидным JSON-массивом. 
-НЕ пиши никаких вступительных слов. Начинай ответ с символа [ и заканчивай символом ].
-Пример правильного ответа:
-[{{"claim":"Мэр выступил","status":"confirmed","comment":"Подтверждено СМИ","url":"https://ria.ru"}}]
+    prompt = f"""Ты — строгий фактчекер. Проанализируй текст ниже.
+Выпиши 3-5 проверяемых утверждений и для каждого определи статус.
 
-Текст для проверки:
+Текст:
 {text}"""
 
     try:
         from gigachat import GigaChat
-        with GigaChat(credentials=giga_key, model="GigaChat-2",
-                      scope="GIGACHAT_API_PERS", verify_ssl_certs=False) as client:
-            # Вызов без лишних аргументов
-            resp = client.chat.create(prompt)
-            raw_content = resp.messages[0].content
+        from gigachat.models import ChatCompletionRequest, ChatMessage, ChatModelOptions, ChatResponseFormat
 
-        # Извлекаем текст
+        # Формируем запрос со строгой схемой (Structured Output)
+        request = ChatCompletionRequest(
+            model="GigaChat-2",
+            messages=[ChatMessage(role="user", content=prompt)],
+            model_options=ChatModelOptions(
+                response_format=ChatResponseFormat(
+                    type="json_schema",
+                    schema=CheckResult,
+                    strict=True
+                )
+            )
+        )
+
+        with GigaChat(credentials=giga_key, scope="GIGACHAT_API_PERS", verify_ssl_certs=False) as client:
+            response = client.chat.create(request)
+            raw_content = response.messages[0].content
+
+        # Извлекаем текст (на случай, если SDK вернул список)
         if isinstance(raw_content, list):
             if len(raw_content) > 0 and isinstance(raw_content[0], dict):
                 raw = raw_content[0].get("text", "")
@@ -101,38 +115,29 @@ def check_news(text: str):
         else:
             raw = str(raw_content)
 
-        # Ищем первую [ и последнюю ]
-        start_idx = raw.find('[')
-        end_idx = raw.rfind(']')
+        # Строгий вывод обычно возвращает чистый JSON, но на всякий случай чистим markdown
+        raw = raw.replace("```json", "").replace("```", "").strip()
         
-        if start_idx == -1 or end_idx == -1 or end_idx < start_idx:
-            raise ValueError("Модель не вернула JSON-массив (нет скобок)")
-
-        raw_json = raw[start_idx:end_idx+1]
-
-        try:
-            results = json.loads(raw_json)
-        except json.JSONDecodeError:
-            # Если JSON сломан, чиним
-            fixed_json = repair_json(raw_json)
-            results = json.loads(fixed_json)
-
-        # Если это не список или он пуст
-        if not isinstance(results, list) or len(results) == 0:
-            raise ValueError("Модель вернула пустой список")
+        # Парсим
+        data = json.loads(raw)
+        
+        # Достаем список results (так как схема CheckResult содержит ключ results)
+        if isinstance(data, dict) and "results" in data:
+            results = data["results"]
+        else:
+            results = data
 
         normalized = []
         for r in results:
-            if not isinstance(r, dict):
-                continue
-            claim_text = r.get("claim") or "Утверждение без текста"
+            claim_text = r.get("claim", "Утверждение без текста")
             status = r.get("status", "no_source")
             if status not in ["confirmed", "contradicted", "no_source"]:
                 status = "no_source"
                 
-            comment = r.get("comment") or "Нет деталей."
+            comment = r.get("comment", "Нет деталей.")
             url = r.get("url")
             
+            # Если ссылки нет, но она нужна — подставляем поиск
             if not url and status != "no_source":
                 search_query = claim_text.replace(" ", "+")
                 url = f"https://yandex.ru/search/?text={search_query}"
@@ -145,12 +150,12 @@ def check_news(text: str):
             })
             
         if not normalized:
-            raise ValueError("Не удалось извлечь ни одного утверждения")
+            raise ValueError("Модель вернула пустой список")
 
         return normalized
 
     except Exception as e:
-        st.warning(f"Нейросеть не справилась ({e}). Включаю умную заглушку.")
+        st.warning(f"Строгий вывод не сработал ({e}). Включаю умную заглушку.")
         return check_news_stub(text)
 
 # ==========================================
@@ -189,14 +194,14 @@ def load_from_firebase(limit=10):
 st.set_page_config(page_title="SwampEditor MVP", page_icon="🐸", layout="wide")
 
 st.title("🐸 SwampEditor")
-st.caption("AI-ассистент проверки новостей · (GigaChat + Firebase)")
+st.caption("AI-ассистент проверки новостей · (GigaChat Structured Output + Firebase)")
 
 with st.sidebar:
     st.header("О проекте")
     st.write("**Команда:** Source? Trust Me Bro")
     st.write("MVP для проверки новостей перед публикацией.")
     st.divider()
-    st.info("Данные сохраняются в Firebase Firestore. Проверка текста выполняется через GigaChat API.")
+    st.info("Данные сохраняются в Firebase Firestore. Проверка текста выполняется через GigaChat API (Structured Output).")
 
 text_input = st.text_area(
     "Вставь черновик новости:",
