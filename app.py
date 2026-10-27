@@ -17,26 +17,26 @@ from json_repair import repair_json
 # 1. FIREBASE
 # ==========================================
 def _get_firebase_cred():
- try:
- if "firebase" in st.secrets:
- cred_dict = dict(st.secrets["firebase"])
- if "private_key" in cred_dict:
- cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
- return credentials.Certificate(cred_dict)
- except Exception:
- pass
- if os.path.exists("firebase-key.json"):
- return credentials.Certificate("firebase-key.json")
- return None
+    try:
+        if "firebase" in st.secrets:
+            cred_dict = dict(st.secrets["firebase"])
+            if "private_key" in cred_dict:
+                cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
+            return credentials.Certificate(cred_dict)
+    except Exception:
+        pass
+    if os.path.exists("firebase-key.json"):
+        return credentials.Certificate("firebase-key.json")
+    return None
 
 try:
- firebase_admin.get_app()
+    firebase_admin.get_app()
 except ValueError:
- _cred = _get_firebase_cred()
- if _cred is None:
- st.error("Firebase не инициализирован: проверь секреты [firebase] или firebase-key.json.")
- st.stop()
- firebase_admin.initialize_app(_cred)
+    _cred = _get_firebase_cred()
+    if _cred is None:
+        st.error("Firebase не инициализирован: проверь секреты [firebase] или firebase-key.json.")
+        st.stop()
+    firebase_admin.initialize_app(_cred)
 
 db = firestore.client()
 
@@ -44,10 +44,10 @@ db = firestore.client()
 # 2. НАСТРОЙКИ
 # ==========================================
 def _secret(name, default=None):
- try:
- return st.secrets[name]
- except Exception:
- return os.environ.get(name, default)
+    try:
+        return st.secrets[name]
+    except Exception:
+        return os.environ.get(name, default)
 
 GIGA_KEY = _secret("GIGA_KEY")
 GIGA_SCOPE = _secret("GIGA_SCOPE", "GIGACHAT_API_PERS")
@@ -57,315 +57,314 @@ MAX_CLAIMS = 5
 ICONS = {"confirmed": "✅", "contradicted": "❌", "no_source": "⚠️"}
 
 def yandex_link(query: str) -> str:
- return f"https://yandex.ru/search/?text={quote_plus(query)}"
+    return f"https://yandex.ru/search/?text={quote_plus(query)}"
 
 # ==========================================
 # 3. GIGACHAT
 # ==========================================
 def call_gigachat(system_prompt: str, user_prompt: str, retries: int = 2) -> str:
- from gigachat import GigaChat
- from gigachat.models import Chat, Messages, MessagesRole
+    from gigachat import GigaChat
+    from gigachat.models import Chat, Messages, MessagesRole
 
- last_err = None
- for attempt in range(retries + 1):
- try:
- with GigaChat(
- credentials=GIGA_KEY,
- scope=GIGA_SCOPE,
- model=GIGA_MODEL,
- verify_ssl_certs=False,
- timeout=60,
- ) as client:
- response = client.chat(
- Chat(
- messages=[
- Messages(role=MessagesRole.SYSTEM, content=system_prompt),
- Messages(role=MessagesRole.USER, content=user_prompt),
- ],
- temperature=0.1,
- )
- )
- return response.choices[0].message.content
- except Exception as e:
- last_err = e
- time.sleep(2 * (attempt + 1))
- raise last_err
+    last_err = None
+    for attempt in range(retries + 1):
+        try:
+            with GigaChat(
+                credentials=GIGA_KEY,
+                scope=GIGA_SCOPE,
+                model=GIGA_MODEL,
+                verify_ssl_certs=False,
+                timeout=60,
+            ) as client:
+                response = client.chat(
+                    Chat(
+                        messages=[
+                            Messages(role=MessagesRole.SYSTEM, content=system_prompt),
+                            Messages(role=MessagesRole.USER, content=user_prompt),
+                        ],
+                        temperature=0.1,
+                    )
+                )
+                return response.choices[0].message.content
+        except Exception as e:
+            last_err = e
+            time.sleep(2 * (attempt + 1))
+    raise last_err
 
 def parse_json_array(raw: str):
- raw = raw.replace("```json", "").replace("```", "").strip()
- match = re.search(r"\[.*\]", raw, re.DOTALL)
- if not match:
- raise ValueError("Модель вернула текст вместо JSON")
- chunk = match.group(0)
- try:
- data = json.loads(chunk)
- except json.JSONDecodeError:
- data = json.loads(repair_json(chunk))
- if not isinstance(data, list) or not data:
- raise ValueError("Модель вернула пустой список")
- return data
+    raw = raw.replace("```json", "").replace("```", "").strip()
+    match = re.search(r"\[.*\]", raw, re.DOTALL)
+    if not match:
+        raise ValueError("Модель вернула текст вместо JSON")
+    chunk = match.group(0)
+    try:
+        data = json.loads(chunk)
+    except json.JSONDecodeError:
+        data = json.loads(repair_json(chunk))
+    if not isinstance(data, list) or not data:
+        raise ValueError("Модель вернула пустой список")
+    return data
 
 # ==========================================
 # 4. ПОИСК ИСТОЧНИКОВ (DuckDuckGo, без ключей)
 # ==========================================
 def search_evidence(query: str, max_results: int = 4):
- try:
- try:
- from ddgs import DDGS
- except ImportError:
- from duckduckgo_search import DDGS
- with DDGS() as d:
- hits = list(d.text(query, region="ru-ru", max_results=max_results))
- return [
- {
- "title": h.get("title", ""),
- "url": h.get("href", ""),
- "snippet": (h.get("body") or "")[:400],
- }
- for h in hits
- if h.get("href")
- ]
- except Exception:
- return []
+    try:
+        try:
+            from ddgs import DDGS
+        except ImportError:
+            from duckduckgo_search import DDGS
+        with DDGS() as d:
+            hits = list(d.text(query, region="ru-ru", max_results=max_results))
+            return [
+                {
+                    "title": h.get("title", ""),
+                    "url": h.get("href", ""),
+                    "snippet": (h.get("body") or "")[:400],
+                }
+                for h in hits
+                if h.get("href")
+            ]
+    except Exception:
+        return []
 
 # ==========================================
 # 5. ПАЙПЛАЙН ПРОВЕРКИ
 # ==========================================
 EXTRACT_SYSTEM = "Ты — редактор-фактчекер. Отвечай только валидным JSON без пояснений и без markdown."
 VERIFY_SYSTEM = (
- "Ты — строгий фактчекер. Опирайся ТОЛЬКО на переданные фрагменты источников, "
- "не используй собственные знания для подтверждения. Отвечай только валидным JSON."
+    "Ты — строгий фактчекер. Опирайся ТОЛЬКО на переданные фрагменты источников, "
+    "не используй собственные знания для подтверждения. Отвечай только валидным JSON."
 )
 
 def extract_claims(text: str):
- prompt = (
- f"Выдели из текста до {MAX_CLAIMS} проверяемых утверждений "
- "(цифры, даты, имена, события, цитаты).\n"
- 'Верни JSON-массив строк, например: ["утверждение 1", "утверждение 2"].\n\n'
- f"Текст:\n{text}"
- )
- data = parse_json_array(call_gigachat(EXTRACT_SYSTEM, prompt))
- claims = []
- for item in data:
- if isinstance(item, str):
- claims.append(item.strip())
- elif isinstance(item, dict) and item.get("claim"):
- claims.append(str(item["claim"]).strip())
- claims = [c for c in claims if c][:MAX_CLAIMS]
- if not claims:
- raise ValueError("Не удалось выделить утверждения")
- return claims
+    prompt = (
+        f"Выдели из текста до {MAX_CLAIMS} проверяемых утверждений "
+        "(цифры, даты, имена, события, цитаты).\n"
+        'Верни JSON-массив строк, например: ["утверждение 1", "утверждение 2"].\n\n'
+        f"Текст:\n{text}"
+    )
+    data = parse_json_array(call_gigachat(EXTRACT_SYSTEM, prompt))
+    claims = []
+    for item in data:
+        if isinstance(item, str):
+            claims.append(item.strip())
+        elif isinstance(item, dict) and item.get("claim"):
+            claims.append(str(item["claim"]).strip())
+    claims = [c for c in claims if c][:MAX_CLAIMS]
+    if not claims:
+        raise ValueError("Не удалось выделить утверждения")
+    return claims
 
 def verify_claims(claims, evidence):
- blocks = []
- for i, claim in enumerate(claims):
- sources = evidence[i]
- if sources:
- src_text = "\n".join(
- f" [{j}] {s['title']} — {s['snippet']}" for j, s in enumerate(sources)
- )
- else:
- src_text = " (источники не найдены)"
- blocks.append(f"Утверждение {i}: {claim}\nИсточники:\n{src_text}")
+    blocks = []
+    for i, claim in enumerate(claims):
+        sources = evidence[i]
+        if sources:
+            src_text = "\n".join(
+                f" [{j}] {s['title']} — {s['snippet']}" for j, s in enumerate(sources)
+            )
+        else:
+            src_text = " (источники не найдены)"
+        blocks.append(f"Утверждение {i}: {claim}\nИсточники:\n{src_text}")
 
- prompt = (
- "Сопоставь каждое утверждение с переданными фрагментами источников.\n"
- "Верни JSON-массив, по одному объекту на утверждение:\n"
- '[{"id": 0, "status": "confirmed" | "contradicted" | "no_source", '
- '"comment": "1-2 предложения", "source": номер источника или null}]\n'
- "ПРАВИЛА:\n"
- "- confirmed — только если фрагмент прямо подтверждает утверждение.\n"
- "- contradicted — только если фрагмент прямо ему противоречит.\n"
- "- Если данных недостаточно или источников нет — no_source.\n"
- "- Поле source — номер источника из списка, никаких выдуманных ссылок.\n\n"
- + "\n\n".join(blocks)
- )
- return parse_json_array(call_gigachat(VERIFY_SYSTEM, prompt))
+    prompt = (
+        "Сопоставь каждое утверждение с переданными фрагментами источников.\n"
+        "Верни JSON-массив, по одному объекту на утверждение:\n"
+        '[{"id": 0, "status": "confirmed" | "contradicted" | "no_source", '
+        '"comment": "1-2 предложения", "source": номер источника или null}]\n'
+        "ПРАВИЛА:\n"
+        "- confirmed — только если фрагмент прямо подтверждает утверждение.\n"
+        "- contradicted — только если фрагмент прямо ему противоречит.\n"
+        "- Если данных недостаточно или источников нет — no_source.\n"
+        "- Поле source — номер источника из списка, никаких выдуманных ссылок.\n\n"
+        + "\n\n".join(blocks)
+    )
+    return parse_json_array(call_gigachat(VERIFY_SYSTEM, prompt))
 
 # ==========================================
 # 5a. СОВМЕСТИМЫЙ ВЫЗОВ GIGACHAT
 # Работает и с новым SDK (client.chat.create), и со старым (client.chat(Chat)).
-# Переопределяет call_gigachat из первой части.
 # ==========================================
 GIGA_BASE_URL = _secret("GIGA_BASE_URL") # необязательно, например https://api.giga.chat/v1
 
 def call_gigachat(system_prompt: str, user_prompt: str, retries: int = 2) -> str:
- from gigachat import GigaChat
+    from gigachat import GigaChat
 
- kwargs = {
- "credentials": GIGA_KEY,
- "scope": GIGA_SCOPE,
- "model": GIGA_MODEL,
- "verify_ssl_certs": False,
- }
- if GIGA_BASE_URL:
- kwargs["base_url"] = GIGA_BASE_URL
+    kwargs = {
+        "credentials": GIGA_KEY,
+        "scope": GIGA_SCOPE,
+        "model": GIGA_MODEL,
+        "verify_ssl_certs": False,
+    }
+    if GIGA_BASE_URL:
+        kwargs["base_url"] = GIGA_BASE_URL
 
- last_err = None
- for attempt in range(retries + 1):
- try:
- with GigaChat(**kwargs) as client:
- chat_api = getattr(client, "chat")
+    last_err = None
+    for attempt in range(retries + 1):
+        try:
+            with GigaChat(**kwargs) as client:
+                chat_api = getattr(client, "chat")
 
- # Новый SDK — как в документации Сбера
- if hasattr(chat_api, "create"):
- response = chat_api.create(f"{system_prompt}\n\n{user_prompt}")
- return response.messages[0].content[0].text
+                # Новый SDK — как в документации Сбера
+                if hasattr(chat_api, "create"):
+                    response = chat_api.create(f"{system_prompt}\n\n{user_prompt}")
+                    return response.messages[0].content[0].text
 
- # Старый SDK
- from gigachat.models import Chat, Messages, MessagesRole
- response = client.chat(
- Chat(
- messages=[
- Messages(role=MessagesRole.SYSTEM, content=system_prompt),
- Messages(role=MessagesRole.USER, content=user_prompt),
- ],
- temperature=0.1,
- )
- )
- return response.choices[0].message.content
- except Exception as e:
- last_err = e
- if attempt < retries:
- time.sleep(2 * (attempt + 1))
- raise last_err
+                # Старый SDK
+                from gigachat.models import Chat, Messages, MessagesRole
+                response = client.chat(
+                    Chat(
+                        messages=[
+                            Messages(role=MessagesRole.SYSTEM, content=system_prompt),
+                            Messages(role=MessagesRole.USER, content=user_prompt),
+                        ],
+                        temperature=0.1,
+                    )
+                )
+                return response.choices[0].message.content
+        except Exception as e:
+            last_err = e
+            if attempt < retries:
+                time.sleep(2 * (attempt + 1))
+    raise last_err
 
 # ==========================================
 # 5b. ДЕМО-РЕЖИМ (без AI, ничего не подтверждает)
 # ==========================================
 def check_news_stub(text: str):
- sentences = [s.strip() for s in re.split(r"[.!?]", text) if s.strip()]
- risky_words = ["первый", "самый", "вырос", "упал", "процент", "миллион", "умер", "заявил"]
- results = []
- for s in sentences:
- risky = bool(re.search(r"\d+", s)) or any(w in s.lower() for w in risky_words)
- if risky:
- results.append(
- {
- "claim": s,
- "status": "no_source",
- "comment": "Демо-режим: в предложении есть цифры или громкое заявление — нужна проверка.",
- "url": None,
- "search_url": yandex_link(s),
- "sources": [],
- }
- )
- if not results and sentences:
- results.append(
- {
- "claim": sentences[0],
- "status": "no_source",
- "comment": "Демо-режим: явных рисков не найдено, но без AI утверждение не проверено.",
- "url": None,
- "search_url": yandex_link(sentences[0]),
- "sources": [],
- }
- )
- return results
+    sentences = [s.strip() for s in re.split(r"[.!?]", text) if s.strip()]
+    risky_words = ["первый", "самый", "вырос", "упал", "процент", "миллион", "умер", "заявил"]
+    results = []
+    for s in sentences:
+        risky = bool(re.search(r"\d+", s)) or any(w in s.lower() for w in risky_words)
+        if risky:
+            results.append(
+                {
+                    "claim": s,
+                    "status": "no_source",
+                    "comment": "Демо-режим: в предложении есть цифры или громкое заявление — нужна проверка.",
+                    "url": None,
+                    "search_url": yandex_link(s),
+                    "sources": [],
+                }
+            )
+    if not results and sentences:
+        results.append(
+            {
+                "claim": sentences[0],
+                "status": "no_source",
+                "comment": "Демо-режим: явных рисков не найдено, но без AI утверждение не проверено.",
+                "url": None,
+                "search_url": yandex_link(sentences[0]),
+                "sources": [],
+            }
+        )
+    return results
 
 # ==========================================
 # 6. ОСНОВНАЯ ПРОВЕРКА
 # ==========================================
 def check_news(text: str):
- """Возвращает (results, mode), где mode — 'ai' или 'demo'."""
- if not GIGA_KEY:
- st.warning("Ключ GIGA_KEY не найден в Secrets — работает демо-режим без AI.")
- return check_news_stub(text), "demo"
+    """Возвращает (results, mode), где mode — 'ai' или 'demo'."""
+    if not GIGA_KEY:
+        st.warning("Ключ GIGA_KEY не найден в Secrets — работает демо-режим без AI.")
+        return check_news_stub(text), "demo"
 
- try:
- claims = extract_claims(text)
- evidence = [search_evidence(claim) for claim in claims]
- verdicts = verify_claims(claims, evidence)
+    try:
+        claims = extract_claims(text)
+        evidence = [search_evidence(claim) for claim in claims]
+        verdicts = verify_claims(claims, evidence)
 
- by_id = {}
- for v in verdicts:
- if isinstance(v, dict):
- try:
- by_id[int(v.get("id"))] = v
- except (TypeError, ValueError):
- pass
+        by_id = {}
+        for v in verdicts:
+            if isinstance(v, dict):
+                try:
+                    by_id[int(v.get("id"))] = v
+                except (TypeError, ValueError):
+                    pass
 
- results = []
- for i, claim in enumerate(claims):
- v = by_id.get(i, {})
- sources = evidence[i]
+        results = []
+        for i, claim in enumerate(claims):
+            v = by_id.get(i, {})
+            sources = evidence[i]
 
- status = v.get("status")
- if status not in ICONS:
- status = "no_source"
+            status = v.get("status")
+            if status not in ICONS:
+                status = "no_source"
 
- url = None
- try:
- src_idx = int(v.get("source"))
- except (TypeError, ValueError):
- src_idx = None
- if src_idx is not None and 0 <= src_idx < len(sources):
- url = sources[src_idx]["url"]
+            url = None
+            try:
+                src_idx = int(v.get("source"))
+            except (TypeError, ValueError):
+                src_idx = None
+            if src_idx is not None and 0 <= src_idx < len(sources):
+                url = sources[src_idx]["url"]
 
- # Без реальной найденной ссылки не подтверждаем и не опровергаем
- if status != "no_source" and not url:
- status = "no_source"
+            # Без реальной найденной ссылки не подтверждаем и не опровергаем
+            if status != "no_source" and not url:
+                status = "no_source"
 
- comment = str(v.get("comment") or "").strip()
- if not comment:
- comment = (
- "Источники по утверждению не найдены."
- if not sources
- else "Во найденных фрагментах недостаточно данных для вывода."
- )
+            comment = str(v.get("comment") or "").strip()
+            if not comment:
+                comment = (
+                    "Источники по утверждению не найдены."
+                    if not sources
+                    else "В найденных фрагментах недостаточно данных для вывода."
+                )
 
- results.append(
- {
- "claim": claim,
- "status": status,
- "comment": comment,
- "url": url,
- "search_url": yandex_link(claim),
- "sources": sources,
- }
- )
- return results, "ai"
+            results.append(
+                {
+                    "claim": claim,
+                    "status": status,
+                    "comment": comment,
+                    "url": url,
+                    "search_url": yandex_link(claim),
+                    "sources": sources,
+                }
+            )
+        return results, "ai"
 
- except Exception as e:
- st.error(f"Ошибка GigaChat: {type(e).__name__}: {e}")
- st.caption("Показан демо-режим без AI. Проверьте GIGA_KEY, GIGA_SCOPE, GIGA_MODEL и версию пакета gigachat.")
- return check_news_stub(text), "demo"
+    except Exception as e:
+        st.error(f"Ошибка GigaChat: {type(e).__name__}: {e}")
+        st.caption("Показан демо-режим без AI. Проверьте GIGA_KEY, GIGA_SCOPE, GIGA_MODEL и версию пакета gigachat.")
+        return check_news_stub(text), "demo"
 
 # ==========================================
 # 7. FIREBASE: СОХРАНЕНИЕ И ИСТОРИЯ
 # ==========================================
 def save_to_firebase(text, results, mode):
- try:
- db.collection("checks").add(
- {
- "text": text,
- "results": results,
- "mode": mode,
- "created_at": firestore.SERVER_TIMESTAMP,
- }
- )
- return True
- except Exception as e:
- st.warning(f"Не удалось сохранить проверку: {e}")
- return False
+    try:
+        db.collection("checks").add(
+            {
+                "text": text,
+                "results": results,
+                "mode": mode,
+                "created_at": firestore.SERVER_TIMESTAMP,
+            }
+        )
+        return True
+    except Exception as e:
+        st.warning(f"Не удалось сохранить проверку: {e}")
+        return False
 
 def load_from_firebase(limit=10):
- try:
- docs = (
- db.collection("checks")
- .order_by("created_at", direction=firestore.Query.DESCENDING)
- .limit(limit)
- .stream()
- )
- history = []
- for doc in docs:
- data = doc.to_dict() or {}
- created = data.get("created_at")
- data["created_at"] = created.strftime("%Y-%m-%d %H:%M") if hasattr(created, "strftime") else "Недавно"
- history.append(data)
- return history
- except Exception:
- return []
+    try:
+        docs = (
+            db.collection("checks")
+            .order_by("created_at", direction=firestore.Query.DESCENDING)
+            .limit(limit)
+            .stream()
+        )
+        history = []
+        for doc in docs:
+            data = doc.to_dict() or {}
+            created = data.get("created_at")
+            data["created_at"] = created.strftime("%Y-%m-%d %H:%M") if hasattr(created, "strftime") else "Недавно"
+            history.append(data)
+        return history
+    except Exception:
+        return []
 
 # ==========================================
 # 8. ИНТЕРФЕЙС
@@ -374,79 +373,79 @@ st.title("🐸 SwampEditor")
 st.caption("AI-ассистент проверки новостей · GigaChat + поиск источников + Firebase")
 
 with st.sidebar:
- st.header("О проекте")
- st.write("**Команда:** Source? Trust Me Bro")
- st.write("MVP для проверки новостей перед публикацией.")
- st.divider()
- st.info(
- "1) GigaChat выделяет проверяемые утверждения.\n\n"
- "2) Система ищет по ним источники.\n\n"
- "3) GigaChat сверяет утверждения только с найденными фрагментами.\n\n"
- "Финальное решение — за редактором."
- )
+    st.header("О проекте")
+    st.write("**Команда:** Source? Trust Me Bro")
+    st.write("MVP для проверки новостей перед публикацией.")
+    st.divider()
+    st.info(
+        "1) GigaChat выделяет проверяемые утверждения.\n\n"
+        "2) Система ищет по ним источники.\n\n"
+        "3) GigaChat сверяет утверждения только с найденными фрагментами.\n\n"
+        "Финальное решение — за редактором."
+    )
 
 text_input = st.text_area(
- "Вставь черновик новости:",
- height=200,
- placeholder="Например: Мэр заявил, что бюджет вырос на 40%. Встреча прошла 15 марта.",
+    "Вставь черновик новости:",
+    height=200,
+    placeholder="Например: Мэр заявил, что бюджет вырос на 40%. Встреча прошла 15 марта.",
 )
 
 if st.button("Проверить", type="primary"):
- if not text_input.strip():
- st.warning("Сначала вставь текст")
- else:
- with st.spinner("Выделяю утверждения, ищу источники, сверяю..."):
- results, mode = check_news(text_input)
+    if not text_input.strip():
+        st.warning("Сначала вставь текст")
+    else:
+        with st.spinner("Выделяю утверждения, ищу источники, сверяю..."):
+            results, mode = check_news(text_input)
 
- if mode == "demo":
- st.warning("⚠️ Демо-режим: результат получен без AI и не является фактчекингом.")
- else:
- st.success("Проверка выполнена с помощью GigaChat и найденных источников.")
+        if mode == "demo":
+            st.warning("⚠️ Демо-режим: результат получен без AI и не является фактчекингом.")
+        else:
+            st.success("Проверка выполнена с помощью GigaChat и найденных источников.")
 
- if save_to_firebase(text_input, results, mode):
- st.caption("Результат сохранён в Firebase.")
+        if save_to_firebase(text_input, results, mode):
+            st.caption("Результат сохранён в Firebase.")
 
- confirmed = sum(r["status"] == "confirmed" for r in results)
- contradicted = sum(r["status"] == "contradicted" for r in results)
- no_source = sum(r["status"] == "no_source" for r in results)
+        confirmed = sum(r["status"] == "confirmed" for r in results)
+        contradicted = sum(r["status"] == "contradicted" for r in results)
+        no_source = sum(r["status"] == "no_source" for r in results)
 
- c1, c2, c3 = st.columns(3)
- c1.metric("✅ Подтверждено", confirmed)
- c2.metric("⚠️ Нет источника", no_source)
- c3.metric("❌ Противоречит", contradicted)
+        c1, c2, c3 = st.columns(3)
+        c1.metric("✅ Подтверждено", confirmed)
+        c2.metric("⚠️ Нет источника", no_source)
+        c3.metric("❌ Противоречит", contradicted)
 
- st.divider()
+        st.divider()
 
- for r in results:
- with st.container(border=True):
- st.markdown(f"### {ICONS.get(r['status'], '•')} {r['claim']}")
- st.write(r.get("comment", ""))
+        for r in results:
+            with st.container(border=True):
+                st.markdown(f"### {ICONS.get(r['status'], '•')} {r['claim']}")
+                st.write(r.get("comment", ""))
 
- links = []
- if r.get("url"):
- links.append(f"[Источник]({r['url']})")
- if r.get("search_url"):
- links.append(f"[Искать в Яндексе]({r['search_url']})")
- if links:
- st.markdown(" · ".join(links))
+                links = []
+                if r.get("url"):
+                    links.append(f"[Источник]({r['url']})")
+                if r.get("search_url"):
+                    links.append(f"[Искать в Яндексе]({r['search_url']})")
+                if links:
+                    st.markdown(" · ".join(links))
 
- if r.get("sources"):
- with st.expander(f"Найденные материалы ({len(r['sources'])})"):
- for s in r["sources"]:
- st.markdown(f"**[{s['title'] or s['url']}]({s['url']})**")
- st.caption(s.get("snippet", ""))
+                if r.get("sources"):
+                    with st.expander(f"Найденные материалы ({len(r['sources'])})"):
+                        for s in r["sources"]:
+                            st.markdown(f"**[{s['title'] or s['url']}]({s['url']})**")
+                            st.caption(s.get("snippet", ""))
 
 st.divider()
 st.subheader("📚 Последние проверки (из Firebase)")
 
 history = load_from_firebase()
 if not history:
- st.caption("Пока пусто. Проверь первую новость, чтобы она появилась здесь.")
+    st.caption("Пока пусто. Проверь первую новость, чтобы она появилась здесь.")
 else:
- for item in history:
- text = item.get("text", "")
- mode_label = " · демо" if item.get("mode") == "demo" else ""
- with st.expander(f"{item.get('created_at', 'Недавно')}{mode_label} — {text[:60]}..."):
- st.write(text)
- for res in item.get("results", []):
- st.caption(f"{ICONS.get(res.get('status'), '•')} {res.get('claim', '')}")
+    for item in history:
+        text = item.get("text", "")
+        mode_label = " · демо" if item.get("mode") == "demo" else ""
+        with st.expander(f"{item.get('created_at', 'Недавно')}{mode_label} — {text[:60]}..."):
+            st.write(text)
+            for res in item.get("results", []):
+                st.caption(f"{ICONS.get(res.get('status'), '•')} {res.get('claim', '')}")
