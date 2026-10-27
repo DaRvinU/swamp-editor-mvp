@@ -1,8 +1,7 @@
 # 🐸 SwampEditor — AI-ассистент проверки новостей
 
 > **Команда:** Source? Trust Me Bro  
-> **Ссылка на демо:** https://swamp-editor-mvp-akdhfjjh5no4fuuwujjecm.streamlit.app/
-
+> **Ссылка на демо:** https://swamp-editor-mvp-akdhfjjh5no4fuuwujjecm.streamlit.app/ 
 > **Статус:** MVP (работающий прототип)
 
 ---
