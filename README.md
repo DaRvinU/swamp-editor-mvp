@@ -16,8 +16,3 @@ SwampEditor — это MVP AI-платформы, которая помогае�
 - **Frontend/Backend:** Python, Streamlit
 - **База данных:** Firebase Firestore (NoSQL)
 - **Хостинг:** Hugging Face Spaces
-
-## 🚀 Как запустить локально (для разработчиков)
-1. Клонируйте репозиторий:
-   ```bash
-   git clone https://github.com/ВАШ_НИК/название_репозитория.git
