@@ -3,18 +3,16 @@ import json
 import os
 import re
 import random
+from datetime import datetime
 import firebase_admin
 from firebase_admin import credentials, firestore
 
 # ==========================================
 # 1. ИНИЦИАЛИЗАЦИЯ FIREBASE (безопасно для повторных запусков)
 # ==========================================
-import firebase_admin
-from firebase_admin import credentials, firestore
-
 def _get_firebase_cred():
-    """Возвращает credentials: сначала из secrets (HF), потом из файла (Colab)."""
-    # 1) Hugging Face / Streamlit Cloud
+    """Возвращает credentials: сначала из secrets (Streamlit Cloud), потом из файла (Colab)."""
+    # 1) Streamlit Cloud / Hugging Face
     try:
         if "firebase" in st.secrets:
             cred_dict = dict(st.secrets["firebase"])
@@ -43,42 +41,80 @@ except ValueError:
 db = firestore.client()
 
 # ==========================================
-# 2. ЗАГЛУШКА ВМЕСТО AI
+# 2. ФУНКЦИЯ ПРОВЕРКИ (GIGACHAT + ЗАГЛУШКА)
 # ==========================================
 def check_news_stub(text: str):
-    """
-    Имитирует работу AI-фактчекера.
-    Ищет цифры и «громкие» слова, чтобы выдать правдоподобный результат.
-    """
+    """Заглушка, если API не доступен."""
     sentences = [s.strip() for s in re.split(r'[.!?]', text) if s.strip()]
-
     results = []
     for i, sentence in enumerate(sentences[:6]):
         has_number = bool(re.search(r'\d+', sentence))
-        has_claim_word = any(w in sentence.lower() for w in
-                             ['первый', 'самый', 'вырос', 'упал', 'процент', 'миллион'])
-
+        has_claim_word = any(w in sentence.lower() for w in ['первый', 'самый', 'вырос', 'упал', 'процент', 'миллион'])
+        
         if has_number or has_claim_word:
             status = random.choice(["contradicted", "no_source", "no_source"])
-            comment = "Требует проверки: обнаружены числовые данные или категоричные утверждения (демо-режим)."
+            comment = "Требует проверки: обнаружены числовые данные (демо-режим)."
             url = "https://www.rbc.ru" if status == "contradicted" else None
         else:
             status = "confirmed"
             comment = "Утверждение не содержит явных фактических рисков (демо-режим)."
             url = "https://www.interfax.ru"
-
+            
         if i == 0:
             status = "contradicted"
             comment = "Найдено расхождение с открытыми источниками (демо-режим)."
             url = "https://www.rbc.ru"
 
         results.append({
-            "claim": sentence,
-            "status": status,
-            "comment": comment,
-            "url": url,
+            "claim": sentence, "status": status, "comment": comment, "url": url
         })
     return results
+
+def check_news(text: str):
+    """Реальная проверка через GigaChat API с откатом на заглушку."""
+    # Ищем ключ в секретах или окружении
+    try:
+        giga_key = st.secrets["GIGA_KEY"]
+    except Exception:
+        giga_key = os.environ.get("GIGA_KEY")
+    
+    if not giga_key:
+        st.warning("Ключ GigaChat не найден. Работает демо-режим.")
+        return check_news_stub(text)
+
+    prompt = f"""Ты фактчекер новостей. Из текста ниже выпиши 3-5 проверяемых утверждений.
+Верни ТОЛЬКО JSON-массив без пояснений, строго такого вида:
+[{{"claim":"текст утверждения","status":"confirmed|contradicted|no_source","comment":"1-2 предложения почему","url":null}}]
+
+Текст:
+{text}"""
+
+    try:
+        from gigachat import GigaChat
+        with GigaChat(credentials=giga_key, model="GigaChat-2",
+                      scope="GIGACHAT_API_PERS", verify_ssl_certs=False) as client:
+            resp = client.chat.create({"messages":[{"role":"user","content":prompt}], "temperature":0})
+            raw = resp.messages[0].content
+
+        raw = raw.replace("```json", "").replace("```", "").strip()
+        results = json.loads(raw)
+
+        if isinstance(results, dict):
+            results = results.get("results", results.get("claims", []))
+
+        normalized = []
+        for r in results:
+            normalized.append({
+                "claim": r.get("claim", "Без названия"),
+                "status": r.get("status", "no_source"),
+                "comment": r.get("comment", "Нет комментария"),
+                "url": r.get("url")
+            })
+        return normalized
+
+    except Exception as e:
+        st.warning(f"GigaChat недоступен (Ошибка: {e}). Переключаюсь на демо-режим.")
+        return check_news_stub(text)
 
 # ==========================================
 # 3. РАБОТА С FIREBASE
@@ -117,14 +153,14 @@ def load_from_firebase(limit=10):
 st.set_page_config(page_title="SwampEditor MVP", page_icon="🐸", layout="wide")
 
 st.title("🐸 SwampEditor")
-st.caption("AI-ассистент проверки новостей · Демо-режим (AI подключим позже)")
+st.caption("AI-ассистент проверки новостей · (GigaChat + Firebase)")
 
 with st.sidebar:
     st.header("О проекте")
     st.write("**Команда:** Source? Trust Me Bro")
     st.write("MVP для проверки новостей перед публикацией.")
     st.divider()
-    st.info("Сейчас работает умная заглушка. Данные сохраняются в Firebase Firestore.")
+    st.info("Данные сохраняются в Firebase Firestore. Проверка текста выполняется через GigaChat API.")
 
 text_input = st.text_area(
     "Вставь черновик новости:",
@@ -137,7 +173,7 @@ if st.button("Проверить", type="primary"):
         st.warning("Сначала вставь текст")
     else:
         with st.spinner("Анализирую..."):
-            results = check_news_stub(text_input)
+            results = check_news(text_input)
             save_to_firebase(text_input, results)
             st.success("Результат сохранён в облачную базу!")
 
