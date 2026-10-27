@@ -3,7 +3,6 @@ import json
 import os
 import re
 import random
-from datetime import datetime
 import firebase_admin
 from firebase_admin import credentials, firestore
 
@@ -12,7 +11,6 @@ from firebase_admin import credentials, firestore
 # ==========================================
 def _get_firebase_cred():
     """Возвращает credentials: сначала из secrets (Streamlit Cloud), потом из файла (Colab)."""
-    # 1) Streamlit Cloud / Hugging Face
     try:
         if "firebase" in st.secrets:
             cred_dict = dict(st.secrets["firebase"])
@@ -22,13 +20,11 @@ def _get_firebase_cred():
     except Exception:
         pass
 
-    # 2) Локальный файл (Colab)
     if os.path.exists("firebase-key.json"):
         return credentials.Certificate("firebase-key.json")
 
     return None
 
-# Инициализируем только если приложение ещё не создано
 try:
     firebase_admin.get_app()
 except ValueError:
@@ -72,7 +68,6 @@ def check_news_stub(text: str):
 
 def check_news(text: str):
     """Реальная проверка через GigaChat API с откатом на заглушку."""
-    # Ищем ключ в секретах или окружении
     try:
         giga_key = st.secrets["GIGA_KEY"]
     except Exception:
@@ -94,9 +89,25 @@ def check_news(text: str):
         with GigaChat(credentials=giga_key, model="GigaChat-2",
                       scope="GIGACHAT_API_PERS", verify_ssl_certs=False) as client:
             resp = client.chat.create({"messages":[{"role":"user","content":prompt}], "temperature":0})
-            raw = resp.messages[0].content
+            raw_content = resp.messages[0].content
 
+        # GigaChat иногда возвращает список вместо строки
+        if isinstance(raw_content, list):
+            if len(raw_content) > 0 and isinstance(raw_content[0], dict):
+                raw = raw_content[0].get("text", "")
+            else:
+                raw = "".join(str(item) for item in raw_content)
+        else:
+            raw = str(raw_content)
+
+        # Чистим markdown-обертки
         raw = raw.replace("```json", "").replace("```", "").strip()
+
+        # Пытаемся найти JSON-массив в тексте, если модель добавила лишние слова
+        match = re.search(r'\[.*\]', raw, re.DOTALL)
+        if match:
+            raw = match.group(0)
+
         results = json.loads(raw)
 
         if isinstance(results, dict):
