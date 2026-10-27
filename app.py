@@ -94,27 +94,39 @@ def call_gigachat(system_prompt: str, user_prompt: str, retries: int = 2) -> str
 # ==========================================
 # 4. ПОИСК ИСТОЧНИКОВ (НОВАЯ ВЕРСИЯ)
 # ==========================================
+def _ddg_search(query, max_results):
+    try:
+        from ddgs import DDGS
+    except ImportError:
+        from duckduckgo_search import DDGS
+    with DDGS() as d:
+        return list(d.text(query, region="ru-ru", max_results=max_results))
+
 def search_evidence(query, max_results=4):
     words = query.split()
-    short_query = " ".join(words[:15])
-    try:
-        try:
-            from ddgs import DDGS
-        except ImportError:
-            from duckduckgo_search import DDGS
-        with DDGS() as d:
-            hits = list(d.text(short_query, region="ru-ru", max_results=max_results))
-        return [
-            {
-                "title": h.get("title", ""),
-                "url": h.get("href", ""),
-                "snippet": (h.get("body") or "")[:400],
-            }
-            for h in hits
-            if h.get("href")
-        ]
-    except Exception:
-        return []
+    queries = [" ".join(words[:15])]
+    if len(words) > 6:
+        queries.append(" ".join(words[:6]))
+
+    for q in queries:
+        for attempt in range(3):
+            try:
+                hits = _ddg_search(q, max_results)
+                results = [
+                    {
+                        "title": h.get("title", ""),
+                        "url": h.get("href", ""),
+                        "snippet": (h.get("body") or "")[:400],
+                    }
+                    for h in hits
+                    if h.get("href")
+                ]
+                if results:
+                    return results
+                break
+            except Exception:
+                time.sleep(1.5 * (attempt + 1))
+    return []
 
 # ==========================================
 # 5. ПАЙПЛАЙН ПРОВЕРКИ
@@ -139,7 +151,6 @@ def parse_json_array(raw):
         raise ValueError("Модель вернула не список")
     return data
 
-# НОВАЯ ВЕРСИЯ extract_claims (разбивает по предложениям, без AI)
 def extract_claims(text):
     parts = re.split(r"(?<=[.!?])\s+|\n+", text)
     claims = []
@@ -151,6 +162,7 @@ def extract_claims(text):
         claims = [text.strip()[:300]]
     return claims[:MAX_CLAIMS]
 
+# НОВАЯ ВЕРСИЯ verify_claims
 def verify_claims(claims, evidence):
     blocks = []
     for i, claim in enumerate(claims):
@@ -169,9 +181,12 @@ def verify_claims(claims, evidence):
         '[{"id": 0, "status": "confirmed" | "contradicted" | "no_source", '
         '"comment": "1-2 предложения", "source": номер источника или null}]\n'
         "ПРАВИЛА:\n"
-        "- confirmed — только если фрагмент прямо подтверждает утверждение.\n"
-        "- contradicted — только если фрагмент прямо ему противоречит.\n"
-        "- Если данных недостаточно или источников нет — no_source.\n"
+        "- Источник относится к утверждению, ТОЛЬКО если в нём говорится о том же "
+        "человеке/объекте и том же событии.\n"
+        "- confirmed — относящийся источник прямо подтверждает утверждение.\n"
+        "- contradicted — относящийся источник прямо опровергает утверждение "
+        "(опровержение, другая дата, другая цифра, другой участник).\n"
+        "- Если источники о другом или упоминаний нет — это НЕ противоречие, а no_source.\n"
         "- Поле source — ТОЛЬКО число, номер источника из списка, например 1.\n\n"
         + "\n\n".join(blocks)
     )
@@ -186,7 +201,7 @@ def verify_claims(claims, evidence):
 # ==========================================
 # 5a. СОВМЕСТИМЫЙ ВЫЗОВ GIGACHAT
 # ==========================================
-GIGA_BASE_URL = _secret("GIGA_BASE_URL") # необязательно, например https://api.giga.chat/v1
+GIGA_BASE_URL = _secret("GIGA_BASE_URL") # необязательно
 
 def call_gigachat(system_prompt: str, user_prompt: str, retries: int = 2) -> str:
     from gigachat import GigaChat
@@ -206,12 +221,10 @@ def call_gigachat(system_prompt: str, user_prompt: str, retries: int = 2) -> str
             with GigaChat(**kwargs) as client:
                 chat_api = getattr(client, "chat")
 
-                # Новый SDK — как в документации Сбера
                 if hasattr(chat_api, "create"):
                     response = chat_api.create(f"{system_prompt}\n\n{user_prompt}")
                     return response.messages[0].content[0].text
 
-                # Старый SDK
                 from gigachat.models import Chat, Messages, MessagesRole
                 response = client.chat(
                     Chat(
@@ -230,7 +243,7 @@ def call_gigachat(system_prompt: str, user_prompt: str, retries: int = 2) -> str
     raise last_err
 
 # ==========================================
-# 5b. ДЕМО-РЕЖИМ (без AI, ничего не подтверждает)
+# 5b. ДЕМО-РЕЖИМ
 # ==========================================
 def check_news_stub(text: str):
     sentences = [s.strip() for s in re.split(r"[.!?]", text) if s.strip()]
@@ -263,7 +276,7 @@ def check_news_stub(text: str):
     return results
 
 # ==========================================
-# 6. ОСНОВНАЯ ПРОВЕРКА
+# 6. ОСНОВНАЯ ПРОВЕРКА (ВОССТАНОВЛЕНА)
 # ==========================================
 STATUS_ALIASES = [
     ("no_source", "no_source"),
@@ -466,14 +479,12 @@ if st.button("Проверить", type="primary"):
         c2.metric("⚠️ Нет источника", no_source)
         c3.metric("❌ Противоречит", contradicted)
 
-        # --- НОВЫЙ БЛОК: ОБЩИЙ ВЕРДИКТ ---
         if contradicted > 0:
             st.error("❌ Общий вывод: в новости есть утверждения, противоречащие источникам.")
         elif results and confirmed == len(results):
             st.success("✅ Общий вывод: все утверждения подтверждены найденными источниками.")
         else:
             st.warning("⚠️ Общий вывод: часть утверждений не удалось подтвердить — нужна проверка редактора.")
-        # ---------------------------------
 
         st.divider()
 
