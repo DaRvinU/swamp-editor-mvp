@@ -35,7 +35,7 @@ except ValueError:
 db = firestore.client()
 
 # ==========================================
-# 2. ЗАГЛУШКА (если AI не справится)
+# 2. ЗАГЛУШКА (классная, с Яндексом)
 # ==========================================
 def check_news_stub(text: str):
     sentences = [s.strip() for s in re.split(r'[.!?]', text) if s.strip()]
@@ -62,7 +62,7 @@ def check_news_stub(text: str):
     return results
 
 # ==========================================
-# 3. ПРОВЕРКА НОВОСТЕЙ (GigaChat)
+# 3. ПРОВЕРКА НОВОСТЕЙ (GigaChat по официальному SDK)
 # ==========================================
 def check_news(text: str):
     try:
@@ -94,44 +94,47 @@ def check_news(text: str):
 
     try:
         from gigachat import GigaChat
-        with GigaChat(credentials=giga_key, model="GigaChat-2",
-                      scope="GIGACHAT_API_PERS", verify_ssl_certs=False) as client:
-            # Вызов без temperature
-            resp = client.chat.create(prompt)
-            raw_content = resp.messages[0].content
-
-        # Извлекаем текст
-        if isinstance(raw_content, list):
-            if len(raw_content) > 0 and isinstance(raw_content[0], dict):
-                raw = raw_content[0].get("text", "")
+        # Инициализация строго по документации
+        with GigaChat(
+            base_url="https://api.giga.chat/v1",
+            credentials=giga_key, 
+            scope="GIGACHAT_API_PERS", 
+            verify_ssl_certs=False
+        ) as client:
+            response = client.chat.create(prompt)
+            
+            # В официальном SDK ответ лежит в списке content
+            # response.messages[0].content[0].text
+            raw_text = ""
+            if response.messages and response.messages[0].content:
+                raw_text = response.messages[0].content[0].text
             else:
-                raw = "".join(str(item) for item in raw_content)
-        else:
-            raw = str(raw_content)
+                raise ValueError("Пустой ответ от модели")
 
-        raw = raw.replace("```json", "").replace("```", "").strip()
+        # Очистка от markdown
+        raw_text = raw_text.replace("```json", "").replace("```", "").strip()
         
-        # Ищем JSON-массив. Если не нашли — значит модель ответила текстом.
-        match = re.search(r'\[.*\]', raw, re.DOTALL)
+        # Ищем JSON-массив
+        match = re.search(r'\[.*\]', raw_text, re.DOTALL)
         if not match:
-            raise ValueError("Не найден JSON-массив в ответе модели")
-
+            raise ValueError("Модель вернула текст вместо JSON")
+            
         raw_json = match.group(0)
 
+        # Парсим (если кривой — чиним)
         try:
             results = json.loads(raw_json)
         except json.JSONDecodeError:
-            fixed_json = repair_json(raw_json)
-            results = json.loads(fixed_json)
+            st.info("Формат ответа был немного нарушен, исправляю...")
+            results = json.loads(repair_json(raw_json))
 
-        # Если массив пустой или это не список — вызываем ошибку
         if not isinstance(results, list) or len(results) == 0:
             raise ValueError("Модель вернула пустой список")
 
         normalized = []
         for r in results:
-            if not isinstance(r, dict):
-                continue
+            if not isinstance(r, dict): continue
+            
             claim_text = r.get("claim") or "Утверждение без текста"
             status = r.get("status", "no_source")
             if status not in ["confirmed", "contradicted", "no_source"]:
@@ -140,7 +143,7 @@ def check_news(text: str):
             comment = r.get("comment") or "Нет деталей."
             url = r.get("url")
             
-            # Если ссылки нет, но она нужна — подставляем поиск
+            # Если ссылки нет, но статус требует — подставляем поиск
             if not url and status != "no_source":
                 search_query = claim_text.replace(" ", "+")
                 url = f"https://yandex.ru/search/?text={search_query}"
@@ -153,12 +156,12 @@ def check_news(text: str):
             })
             
         if not normalized:
-            raise ValueError("Не удалось извлечь ни одного утверждения")
+            raise ValueError("Не удалось собрать данные из ответа")
 
         return normalized
 
     except Exception as e:
-        st.warning(f"Нейросеть не справилась ({e}). Включаю умную заглушку.")
+        st.warning(f"Модель не справилась ({e}). Включаю умную заглушку.")
         return check_news_stub(text)
 
 # ==========================================
