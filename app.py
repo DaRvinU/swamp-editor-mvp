@@ -36,7 +36,7 @@ except ValueError:
 db = firestore.client()
 
 # ==========================================
-# 2. УМНАЯ ЗАГЛУШКА (с Яндексом)
+# 2. УМНАЯ ЗАГЛУШКА (если API упадет)
 # ==========================================
 def check_news_stub(text: str):
     sentences = [s.strip() for s in re.split(r'[.!?]', text) if s.strip()]
@@ -97,25 +97,24 @@ def check_news(text: str):
         from gigachat import GigaChat
         
         # Пауза для предотвращения ошибки 429 (Too Many Requests)
-        time.sleep(1)
+        time.sleep(1.5)
         
         with GigaChat(
             base_url="https://api.giga.chat/v1",
             credentials=giga_key, 
             scope="GIGACHAT_API_PERS", 
-            model="GigaChat-2",  # Явно указываем модель
+            model="GigaChat-2",
             verify_ssl_certs=False
         ) as client:
             response = client.chat.create(prompt)
             
-            # В новой версии SDK текст лежит в списке content
+            # Извлекаем текст из списка (по документации SDK)
             raw_text = ""
             if response.messages and response.messages[0].content:
                 raw_text = response.messages[0].content[0].text
             else:
                 raise ValueError("Пустой ответ от модели")
 
-        # Очистка от markdown
         raw_text = raw_text.replace("```json", "").replace("```", "").strip()
         
         # Ищем JSON-массив
@@ -125,11 +124,10 @@ def check_news(text: str):
             
         raw_json = match.group(0)
 
-        # Парсим (если кривой — чиним)
+        # Парсим, если кривой — чиним
         try:
             results = json.loads(raw_json)
         except json.JSONDecodeError:
-            st.info("Формат ответа был немного нарушен, исправляю...")
             results = json.loads(repair_json(raw_json))
 
         if not isinstance(results, list) or len(results) == 0:
@@ -147,9 +145,9 @@ def check_news(text: str):
             comment = r.get("comment") or "Нет деталей."
             url = r.get("url")
             
-            # Если ссылки нет, но статус требует — подставляем поиск
-            if not url and status != "no_source":
-                search_query = claim_text.replace(" ", "+")
+            # 🔥 ГЛАВНОЕ: Если ссылки нет, подставляем её ВСЕГДА
+            if not url:
+                search_query = claim_text.replace(" ", "+").replace('"', '').replace("'", "")
                 url = f"https://yandex.ru/search/?text={search_query}"
 
             normalized.append({
@@ -219,7 +217,7 @@ text_input = st.text_area(
     placeholder="Например: Мэр заявил, что бюджет вырос на 40%. Встреча прошла 15 марта.",
 )
 
-# Защита от двойных нажатий (предотвращает ошибку 429)
+# Защита от двойных нажатий
 if st.button("Проверить", type="primary"):
     if not text_input.strip():
         st.warning("Сначала вставь текст")
