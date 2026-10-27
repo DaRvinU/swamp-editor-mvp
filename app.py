@@ -35,7 +35,7 @@ except ValueError:
 db = firestore.client()
 
 # ==========================================
-# 2. ЗАГЛУШКА (если AI не справится)
+# 2. ЗАГЛУШКА
 # ==========================================
 def check_news_stub(text: str):
     sentences = [s.strip() for s in re.split(r'[.!?]', text) if s.strip()]
@@ -74,29 +74,21 @@ def check_news(text: str):
         st.warning("Ключ GigaChat не найден. Работает демо-режим.")
         return check_news_stub(text)
 
-    prompt = f"""Ты — строгий фактчекер. Проанализируй текст ниже.
-Верни СТРОГО JSON-массив, где каждый элемент содержит 4 ключа:
-[
-  {{
-    "claim": "цитата из текста",
-    "status": "confirmed" | "contradicted" | "no_source",
-    "comment": "пояснение 1-2 предложения",
-    "url": "ссылка на источник или null"
-  }}
-]
-ПРАВИЛА: 
-- Никакого текста до или после JSON.
-- В поле "claim" ОБЯЗАТЕЛЬНО должен быть текст.
-- Если статус confirmed или contradicted, ссылка (url) ОБЯЗАТЕЛЬНА.
+    # Жесткий промпт
+    prompt = f"""Ты — фактчекер. Твоя задача — проанализировать текст.
+Твой ответ должен быть ТОЛЬКО валидным JSON-массивом. 
+НЕ пиши никаких вступительных слов. Начинай ответ с символа [ и заканчивай символом ].
+Пример правильного ответа:
+[{{"claim":"Мэр выступил","status":"confirmed","comment":"Подтверждено СМИ","url":"https://ria.ru"}}]
 
-Текст:
+Текст для проверки:
 {text}"""
 
     try:
         from gigachat import GigaChat
         with GigaChat(credentials=giga_key, model="GigaChat-2",
                       scope="GIGACHAT_API_PERS", verify_ssl_certs=False) as client:
-            # Вызов без temperature
+            # Вызов без лишних аргументов
             resp = client.chat.create(prompt)
             raw_content = resp.messages[0].content
 
@@ -109,22 +101,23 @@ def check_news(text: str):
         else:
             raw = str(raw_content)
 
-        raw = raw.replace("```json", "").replace("```", "").strip()
+        # Ищем первую [ и последнюю ]
+        start_idx = raw.find('[')
+        end_idx = raw.rfind(']')
         
-        # Ищем JSON-массив. Если не нашли — значит модель ответила текстом.
-        match = re.search(r'\[.*\]', raw, re.DOTALL)
-        if not match:
-            raise ValueError("Не найден JSON-массив в ответе модели")
+        if start_idx == -1 or end_idx == -1 or end_idx < start_idx:
+            raise ValueError("Модель не вернула JSON-массив (нет скобок)")
 
-        raw_json = match.group(0)
+        raw_json = raw[start_idx:end_idx+1]
 
         try:
             results = json.loads(raw_json)
         except json.JSONDecodeError:
+            # Если JSON сломан, чиним
             fixed_json = repair_json(raw_json)
             results = json.loads(fixed_json)
 
-        # Если массив пустой или это не список — вызываем ошибку
+        # Если это не список или он пуст
         if not isinstance(results, list) or len(results) == 0:
             raise ValueError("Модель вернула пустой список")
 
@@ -140,7 +133,6 @@ def check_news(text: str):
             comment = r.get("comment") or "Нет деталей."
             url = r.get("url")
             
-            # Если ссылки нет, но она нужна — подставляем поиск
             if not url and status != "no_source":
                 search_query = claim_text.replace(" ", "+")
                 url = f"https://yandex.ru/search/?text={search_query}"
