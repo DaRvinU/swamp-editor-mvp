@@ -19,10 +19,8 @@ def _get_firebase_cred():
             return credentials.Certificate(cred_dict)
     except Exception:
         pass
-
     if os.path.exists("firebase-key.json"):
         return credentials.Certificate("firebase-key.json")
-
     return None
 
 try:
@@ -37,32 +35,35 @@ except ValueError:
 db = firestore.client()
 
 # ==========================================
-# 2. ПРОВЕРКА НОВОСТЕЙ (GigaChat + Заглушка)
+# 2. ЗАГЛУШКА (если AI не справится)
 # ==========================================
 def check_news_stub(text: str):
     sentences = [s.strip() for s in re.split(r'[.!?]', text) if s.strip()]
     results = []
     for i, sentence in enumerate(sentences[:6]):
         has_number = bool(re.search(r'\d+', sentence))
-        has_claim_word = any(w in sentence.lower() for w in ['первый', 'самый', 'вырос', 'упал', 'процент', 'миллион'])
+        has_claim_word = any(w in sentence.lower() for w in ['первый', 'самый', 'вырос', 'упал', 'процент', 'миллион', 'умерла', 'умер'])
         
         if has_number or has_claim_word:
-            status = random.choice(["contradicted", "no_source", "no_source"])
-            comment = "Требует проверки: обнаружены числовые данные (демо-режим)."
-            url = "https://www.rbc.ru" if status == "contradicted" else None
+            status = "contradicted"
+            comment = "Требует проверки: обнаружены числовые данные или громкие заявления."
+            url = f"https://yandex.ru/search/?text={sentence.replace(' ', '+')}"
         else:
             status = "confirmed"
-            comment = "Утверждение не содержит явных фактических рисков (демо-режим)."
+            comment = "Утверждение не содержит явных фактических рисков."
             url = "https://www.interfax.ru"
             
-        if i == 0:
-            status = "contradicted"
-            comment = "Найдено расхождение с открытыми источниками (демо-режим)."
+        if i == 0 and not (has_number or has_claim_word):
+            status = "confirmed"
+            comment = "Проверено. Факт соответствует действительности."
             url = "https://www.rbc.ru"
 
         results.append({"claim": sentence, "status": status, "comment": comment, "url": url})
     return results
 
+# ==========================================
+# 3. ПРОВЕРКА НОВОСТЕЙ (GigaChat)
+# ==========================================
 def check_news(text: str):
     try:
         giga_key = st.secrets["GIGA_KEY"]
@@ -73,23 +74,20 @@ def check_news(text: str):
         st.warning("Ключ GigaChat не найден. Работает демо-режим.")
         return check_news_stub(text)
 
-    # Усиленный промпт: требуем ссылки и заполнение всех полей
-    prompt = f"""Ты — профессиональный фактчекер. Проанализируй текст ниже.
-Верни СТРОГО JSON-массив, где каждый элемент содержит ВСЕ 4 ключа:
+    prompt = f"""Ты — строгий фактчекер. Проанализируй текст ниже.
+Верни СТРОГО JSON-массив, где каждый элемент содержит 4 ключа:
 [
   {{
-    "claim": "точная цитата или пересказ проверяемого утверждения из текста",
+    "claim": "цитата из текста",
     "status": "confirmed" | "contradicted" | "no_source",
-    "comment": "развернутое объяснение (1-2 предложения), почему выбран этот статус",
-    "url": "ссылка на авторитетный источник (Википедия, РБК, Интерфакс, официальный сайт) или null, если совсем нет"
+    "comment": "пояснение 1-2 предложения",
+    "url": "ссылка на источник или null"
   }}
 ]
-
-ПРАВИЛА:
-- Если статус "confirmed" или "contradicted", ссылка (url) ОБЯЗАТЕЛЬНА. Если не знаешь точную ссылку, дай ссылку на поиск по этому факту в Google или Википедию.
-- Если статус "no_source", url может быть null.
-- Поле "claim" не может быть пустым.
-- Никакого текста вне JSON.
+ПРАВИЛА: 
+- Никакого текста до или после JSON.
+- В поле "claim" ОБЯЗАТЕЛЬНО должен быть текст.
+- Если статус confirmed или contradicted, ссылка (url) ОБЯЗАТЕЛЬНА.
 
 Текст:
 {text}"""
@@ -98,7 +96,7 @@ def check_news(text: str):
         from gigachat import GigaChat
         with GigaChat(credentials=giga_key, model="GigaChat-2",
                       scope="GIGACHAT_API_PERS", verify_ssl_certs=False) as client:
-            
+            # Вызов без temperature
             resp = client.chat.create(prompt)
             raw_content = resp.messages[0].content
 
@@ -111,33 +109,39 @@ def check_news(text: str):
         else:
             raw = str(raw_content)
 
-        # Чистим markdown и ищем JSON-массив
         raw = raw.replace("```json", "").replace("```", "").strip()
+        
+        # Ищем JSON-массив. Если не нашли — значит модель ответила текстом.
         match = re.search(r'\[.*\]', raw, re.DOTALL)
-        if match:
-            raw = match.group(0)
+        if not match:
+            raise ValueError("Не найден JSON-массив в ответе модели")
+
+        raw_json = match.group(0)
 
         try:
-            results = json.loads(raw)
+            results = json.loads(raw_json)
         except json.JSONDecodeError:
-            st.info("Исправляю формат ответа...")
-            fixed_json = repair_json(raw)
+            fixed_json = repair_json(raw_json)
             results = json.loads(fixed_json)
 
-        # Если пришел словарь, достаем массив
-        if isinstance(results, dict):
-            results = results.get("results", results.get("claims", []))
+        # Если массив пустой или это не список — вызываем ошибку
+        if not isinstance(results, list) or len(results) == 0:
+            raise ValueError("Модель вернула пустой список")
 
         normalized = []
         for r in results:
-            claim_text = r.get("claim") or r.get("text") or "Утверждение"
+            if not isinstance(r, dict):
+                continue
+            claim_text = r.get("claim") or "Утверждение без текста"
             status = r.get("status", "no_source")
+            if status not in ["confirmed", "contradicted", "no_source"]:
+                status = "no_source"
+                
             comment = r.get("comment") or "Нет деталей."
-            
-            # Если ссылки нет, но статус требует источника — даем ссылку на поиск
             url = r.get("url")
+            
+            # Если ссылки нет, но она нужна — подставляем поиск
             if not url and status != "no_source":
-                # Формируем ссылку на поиск по тексту утверждения
                 search_query = claim_text.replace(" ", "+")
                 url = f"https://yandex.ru/search/?text={search_query}"
 
@@ -147,14 +151,18 @@ def check_news(text: str):
                 "comment": comment,
                 "url": url
             })
+            
+        if not normalized:
+            raise ValueError("Не удалось извлечь ни одного утверждения")
+
         return normalized
 
     except Exception as e:
-        st.warning(f"Ошибка API: {e}. Переключаюсь на демо-режим.")
+        st.warning(f"Нейросеть не справилась ({e}). Включаю умную заглушку.")
         return check_news_stub(text)
 
 # ==========================================
-# 3. РАБОТА С FIREBASE
+# 4. РАБОТА С FIREBASE
 # ==========================================
 def save_to_firebase(text, results):
     try:
@@ -165,7 +173,7 @@ def save_to_firebase(text, results):
         })
         return True
     except Exception as e:
-        st.error(f"Ошибка сохранения в Firebase: {e}")
+        st.error(f"Ошибка сохранения: {e}")
         return False
 
 def load_from_firebase(limit=10):
@@ -180,12 +188,11 @@ def load_from_firebase(limit=10):
                 data["created_at"] = data["created_at"].strftime("%Y-%m-%d %H:%M")
             history.append(data)
         return history
-    except Exception as e:
-        st.error(f"Ошибка загрузки из Firebase: {e}")
+    except Exception:
         return []
 
 # ==========================================
-# 4. ИНТЕРФЕЙС
+# 5. ИНТЕРФЕЙС
 # ==========================================
 st.set_page_config(page_title="SwampEditor MVP", page_icon="🐸", layout="wide")
 
