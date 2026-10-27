@@ -86,15 +86,19 @@ def check_news(text: str):
 Текст:
 {text}"""
 
-    # 3. Вызов API с жестким перехватом ошибок
+    # 3. Вызов API
     try:
         from gigachat import GigaChat
-        with GigaChat(credentials=giga_key, model="GigaChat", 
-                      scope="GIGACHAT_API_PERS", verify_ssl_certs=False) as client:
-            # Используем базовый вызов
+        # Указываем актуальную модель и хост v2
+        with GigaChat(
+            credentials=giga_key, 
+            model="GigaChat-2",  
+            scope="GIGACHAT_API_PERS", 
+            verify_ssl_certs=False,
+            base_url="https://api.giga.chat/v2" 
+        ) as client:
             resp = client.chat.create(prompt)
             
-            # Достаем текст
             raw_content = resp.messages[0].content
             if isinstance(raw_content, list):
                 raw = raw_content[0].get("text", "") if isinstance(raw_content[0], dict) else "".join(map(str, raw_content))
@@ -103,7 +107,7 @@ def check_news(text: str):
 
             raw = raw.replace("```json", "").replace("```", "").strip()
             
-            # Ищем массив
+            # Ищем JSON-массив
             match = re.search(r'\[.*\]', raw, re.DOTALL)
             if not match:
                 raise ValueError("Ответ не содержит JSON-массив")
@@ -120,7 +124,7 @@ def check_news(text: str):
             if not isinstance(results, list) or len(results) == 0:
                 raise ValueError("Пустой список результатов")
 
-            # Нормализация и добавление ссылок
+            # Нормализация
             normalized = []
             for r in results:
                 if not isinstance(r, dict): continue
@@ -132,7 +136,6 @@ def check_news(text: str):
                 comment = r.get("comment") or "Нет деталей."
                 url = r.get("url")
                 
-                # Страховка: если нет ссылки, но статус требует — подставляем поиск
                 if not url and status != "no_source":
                     url = f"https://yandex.ru/search/?text={claim_text.replace(' ', '+')}"
 
@@ -142,7 +145,6 @@ def check_news(text: str):
             return normalized
 
     except Exception as e:
-        # Если API упал (ошибка сети, ключа или парсинга) — просто идем в заглушку
         st.warning(f"Нейросеть недоступна ({e}). Включаю умную заглушку.")
         return check_news_stub(text)
 
@@ -204,7 +206,7 @@ if st.button("Проверить", type="primary"):
         with st.spinner("Анализирую..."):
             results = check_news(text_input)
             save_to_firebase(text_input, results)
-            st.success("Результат сохранён!")
+            st.success("Результат сохранён в облачную базу!")
 
         confirmed = sum(1 for r in results if r["status"] == "confirmed")
         contradicted = sum(1 for r in results if r["status"] == "contradicted")
