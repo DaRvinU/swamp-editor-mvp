@@ -98,8 +98,8 @@ def check_news(text: str):
         from gigachat import GigaChat
         with GigaChat(credentials=giga_key, model="GigaChat-2",
                       scope="GIGACHAT_API_PERS", verify_ssl_certs=False) as client:
-            # Добавляем temperature для стабильности
-            resp = client.chat.create(prompt, temperature=0.2)
+            
+            resp = client.chat.create(prompt)
             raw_content = resp.messages[0].content
 
         # Извлекаем текст
