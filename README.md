@@ -1,6 +1,5 @@
 # 🐸 SwampEditor — AI-ассистент проверки новостей
-
-> **Хакатон:** Artificial Intelligence (AI) Technology Project Proposal  
+ 
 > **Команда:** Source? Trust Me Bro  
 > **Ссылка на демо:** [Добавь ссылку на Streamlit Cloud после деплоя]  
 > **Статус:** MVP (работающий прототип)
