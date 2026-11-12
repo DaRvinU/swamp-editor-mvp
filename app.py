@@ -465,7 +465,6 @@ def load_from_firebase(limit=10):
 logo = get_image_base64("swamp_logo.png")
 background = get_image_base64("home_bg.png")
 
-<CodeBlock language="python" editable>
 st.markdown(f"""
 <style>
 
@@ -587,7 +586,6 @@ st.markdown(f"""
 
 </style>
 """, unsafe_allow_html=True)
-</CodeBlock>
 
 st.caption("AI-ассистент проверки новостей · GigaChat + поиск источников + Firebase")
 
