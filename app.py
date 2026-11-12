@@ -462,7 +462,7 @@ def load_from_firebase(limit=10):
 # ==========================================
 # 11. ИНТЕРФЕЙС
 # ==========================================
-logo = get_image_base64("swamp_logo.png")
+logo = get_image_base64("assets/swamp_logo.png")
 background = get_image_base64("home_bg.png")
 
 st.markdown(f"""
@@ -597,6 +597,22 @@ st.markdown(f"""
 
 </style>
 """, unsafe_allow_html=True)
+
+
+# Логотип и название проекта
+st.markdown(
+    f"""
+    <div style="display: flex; align-items: center; gap: 18px; margin-bottom: 25px;">
+        <img src="data:image/png;base64,{logo}"
+             style="width: 76px; height: 76px; object-fit: contain;">
+        <span style="font-size: 38px; font-weight: 700; color: white;">
+            SwampEditor
+        </span>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
 
 st.caption("AI-ассистент проверки новостей · GigaChat + поиск источников + Firebase")
 
