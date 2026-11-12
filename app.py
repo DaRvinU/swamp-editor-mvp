@@ -470,35 +470,57 @@ with st.sidebar:
     )
 
 
+
 # ==========================================
 # 12. ЛИЧНЫЙ КАБИНЕТ РЕДАКТОРА
 # ==========================================
 
+EDITIONS = [
+    "Mash",
+    "SHOT",
+    "LIFE",
+    "Mash Регионы",
+    "Five Public",
+    "Mash на Мойке",
+    "Super",
+    "Алёна, блин!",
+    "Жизнь",
+    "SHOT Проверка",
+    "Mash Room",
+    "Black Science",
+    "GEEKОБРАЗ",
+    "Mash на спорте",
+    "Gigarama",
+    "News Media Special",
+    "Другое"
+]
+
 if "editor_profile" not in st.session_state:
     st.session_state["editor_profile"] = {
         "name": "",
-        "position": "Редактор",
-        "department": "Оперативные новости"
+        "email": "",
+        "edition": "Mash",
+        "custom_edition": ""
     }
+
+profile = st.session_state["editor_profile"]
+
+# Совместимость с предыдущей версией профиля
+profile.setdefault("name", "")
+profile.setdefault("email", "")
+profile.setdefault("edition", "Mash")
+profile.setdefault("custom_edition", "")
 
 if page == "Личный кабинет":
 
-    title_col1, title_col2 = st.columns([0.18, 0.82])
-
-    with title_col1:
-        st.image("frog_cabinet.png", width=110)
-
-    with title_col2:
-        st.title("Личный кабинет")
-        st.caption("Профиль редактора SwampEditor")
-
-    profile = st.session_state["editor_profile"]
+    st.title("Личный кабинет")
+    st.caption("Профиль редактора SwampEditor")
 
     left, right = st.columns([1.2, 0.8])
 
     with left:
         with st.container(border=True):
-            st.subheader("Настройки профиля")
+            st.subheader("Данные профиля")
 
             with st.form("profile_form"):
 
@@ -508,34 +530,32 @@ if page == "Личный кабинет":
                     placeholder="Введите ваше имя"
                 )
 
-                positions = [
-                    "Редактор",
-                    "Журналист",
-                    "Фактчекер",
-                    "Выпускающий редактор"
-                ]
-
-                departments = [
-                    "Оперативные новости",
-                    "Региональные медиа",
-                    "Шоу-бизнес и лайфстайл",
-                    "Расследования и контекст",
-                    "Наука и технологии",
-                    "Спорт",
-                    "Креативные и бренд-проекты"
-                ]
-
-                position = st.selectbox(
-                    "Должность",
-                    positions,
-                    index=positions.index(profile["position"])
+                email = st.text_input(
+                    "Рабочая почта",
+                    value=profile["email"],
+                    placeholder="example@company.ru"
                 )
 
-                department = st.selectbox(
+                current_edition = (
+                    profile["edition"]
+                    if profile["edition"] in EDITIONS
+                    else "Другое"
+                )
+
+                edition = st.selectbox(
                     "Редакция",
-                    departments,
-                    index=departments.index(profile["department"])
+                    EDITIONS,
+                    index=EDITIONS.index(current_edition)
                 )
+
+                custom_edition = ""
+
+                if edition == "Другое":
+                    custom_edition = st.text_input(
+                        "Название редакции",
+                        value=profile["custom_edition"],
+                        placeholder="Введите название"
+                    )
 
                 save = st.form_submit_button(
                     "Сохранить изменения",
@@ -544,28 +564,46 @@ if page == "Личный кабинет":
                 )
 
                 if save:
-                    if name.strip():
+                    if not name.strip():
+                        st.warning("Введите имя.")
+                    elif not re.fullmatch(
+                        r"[^@\s]+@[^@\s]+\.[^@\s]+",
+                        email.strip()
+                    ):
+                        st.warning("Введите корректную почту.")
+                    elif edition == "Другое" and not custom_edition.strip():
+                        st.warning("Укажите название редакции.")
+                    else:
                         st.session_state["editor_profile"] = {
                             "name": name.strip(),
-                            "position": position,
-                            "department": department
+                            "email": email.strip(),
+                            "edition": edition,
+                            "custom_edition": custom_edition.strip()
                         }
-                        st.success("Профиль обновлён!")
-                    else:
-                        st.warning("Введите имя.")
+                        st.success("Профиль успешно обновлён!")
 
     with right:
         with st.container(border=True):
             st.subheader("Мой профиль")
 
-            st.image("frog_cabinet.png", width=180)
+            st.markdown("frog_cabinet.png", width=180)
 
             st.markdown(
                 f"### {profile['name'] or 'Новый редактор'}"
             )
 
-            st.write(profile["position"])
-            st.caption(profile["department"])
+            st.caption(profile["email"] or "Почта не указана")
+
+            display_edition = (
+                profile["custom_edition"]
+                if profile["edition"] == "Другое"
+                else profile["edition"]
+            )
+
+            st.divider()
+
+            st.markdown("**Редакция**")
+            st.write(display_edition)
 
             st.divider()
             st.caption("SwampEditor · Editor Workspace")
