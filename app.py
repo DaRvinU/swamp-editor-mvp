@@ -522,7 +522,7 @@ if st.button("Проверить", type="primary"):
                             st.caption(s.get("snippet", ""))
 
 st.divider()
-st.subheader("📚 Последние проверки (из Firebase)")
+st.subheader("Последние проверки (из Firebase)")
 
 history = load_from_firebase()
 if not history:
