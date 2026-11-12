@@ -584,6 +584,17 @@ st.markdown(f"""
     color: #FFFFFF !important;
 }}
 
+/* Тёмный фон боковой панели */
+[data-testid="stSidebar"] {{
+    background: rgba(2, 20, 35, 0.94) !important;
+}}
+
+/* Тёмная информационная плашка */
+[data-testid="stSidebar"] [data-testid="stAlert"] {{
+    background: rgba(2, 20, 35, 0.82) !important;
+    border: 1px solid rgba(255, 255, 255, 0.22) !important;
+}}
+
 </style>
 """, unsafe_allow_html=True)
 
