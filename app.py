@@ -586,7 +586,7 @@ if page == "Личный кабинет":
         with st.container(border=True):
             st.subheader("Мой профиль")
 
-            st.markdown("frog_cabinet.png", width=180)
+            st.image("frog_cabinet.png", width=180)
 
             st.markdown(
                 f"### {profile['name'] or 'Новый редактор'}"
