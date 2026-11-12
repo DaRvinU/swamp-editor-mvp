@@ -1,5 +1,8 @@
 import streamlit as st
 
+import base64
+from pathlib import Path
+
 # set_page_config должен быть первой командой Streamlit
 st.set_page_config(page_title="SwampEditor MVP", page_icon="🐸", layout="wide")
 
@@ -12,6 +15,17 @@ from urllib.parse import quote_plus
 import firebase_admin
 from firebase_admin import credentials, firestore
 from json_repair import repair_json
+
+# ========================================
+# Я добавила новую функцию для картинок
+# =======================================
+
+BASE_DIR = Path(__file__).resolve().parent
+ASSETS_DIR = BASE_DIR / "assets"
+
+def get_image_base64(filename):
+    path = ASSETS_DIR / filename
+    return base64.b64encode(path.read_bytes()).decode()
 
 # ==========================================
 # 1. FIREBASE
@@ -448,7 +462,47 @@ def load_from_firebase(limit=10):
 # ==========================================
 # 11. ИНТЕРФЕЙС
 # ==========================================
-st.title("🐸 SwampEditor")
+logo = get_image_base64("swamp_logo.png")
+background = get_image_base64("home_bg.png")
+
+st.markdown(f"""
+<style>
+.stApp {{
+    background-image:
+        linear-gradient(rgba(2, 20, 35, 0.30),
+                        rgba(2, 20, 35, 0.40)),
+        url("data:image/png;base64,{background}");
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed;
+}}
+
+.swamp-brand {{
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 20px;
+}}
+
+.swamp-brand img {{
+    width: 65px;
+    height: 65px;
+    object-fit: contain;
+}}
+
+.swamp-brand h1 {{
+    color: white;
+    margin: 0;
+    font-size: 2.2rem;
+}}
+</style>
+
+<div class="swamp-brand">
+    <img src="data:image/png;base64,{logo}">
+    <h1>SwampEditor</h1>
+</div>
+""", unsafe_allow_html=True)
+
 st.caption("AI-ассистент проверки новостей · GigaChat + поиск источников + Firebase")
 
 with st.sidebar:
