@@ -465,8 +465,14 @@ def load_from_firebase(limit=10):
 logo = get_image_base64("swamp_logo.png")
 background = get_image_base64("home_bg.png")
 
+<CodeBlock language="python" editable>
 st.markdown(f"""
 <style>
+
+/* =====================================
+   ФОНОВОЕ ИЗОБРАЖЕНИЕ
+   ===================================== */
+
 .stApp {{
     background-image:
         linear-gradient(rgba(2, 20, 35, 0.30),
@@ -477,31 +483,111 @@ st.markdown(f"""
     background-attachment: fixed;
 }}
 
-.swamp-brand {{
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    margin-bottom: 20px;
+/* =====================================
+   БЕЛЫЙ ТЕКСТ
+   ===================================== */
+
+.stApp,
+.stApp p,
+.stApp h1,
+.stApp h2,
+.stApp h3,
+.stApp h4,
+.stApp h5,
+.stApp h6,
+.stApp li,
+.stApp label,
+.stApp a,
+[data-testid="stMarkdownContainer"] * {{
+    color: #FFFFFF !important;
 }}
 
-.swamp-brand img {{
-    width: 65px;
-    height: 65px;
-    object-fit: contain;
+/* Подписи и названия полей */
+
+[data-testid="stWidgetLabel"],
+[data-testid="stWidgetLabel"] p,
+[data-testid="stCaptionContainer"] * {{
+    color: #FFFFFF !important;
 }}
 
-.swamp-brand h1 {{
-    color: white;
-    margin: 0;
-    font-size: 2.2rem;
+/* Боковая панель */
+
+[data-testid="stSidebar"],
+[data-testid="stSidebar"] * {{
+    color: #FFFFFF !important;
 }}
+
+/* =====================================
+   ТЁМНЫЕ ПОЛУПРОЗРАЧНЫЕ ПОДЛОЖКИ
+   ===================================== */
+
+/* Контейнеры с рамками */
+
+[data-testid="stVerticalBlockBorderWrapper"] {{
+    background: rgba(2, 20, 35, 0.76) !important;
+    border: 1px solid rgba(255, 255, 255, 0.22) !important;
+    border-radius: 16px !important;
+    padding: 16px !important;
+    backdrop-filter: blur(8px);
+}}
+
+/* Формы регистрации и личного кабинета */
+
+[data-testid="stForm"] {{
+    background: rgba(2, 20, 35, 0.80) !important;
+    border: 1px solid rgba(255, 255, 255, 0.22) !important;
+    border-radius: 16px !important;
+    padding: 20px !important;
+    backdrop-filter: blur(8px);
+}}
+
+/* Раскрывающиеся блоки */
+
+[data-testid="stExpander"] {{
+    background: rgba(2, 20, 35, 0.76) !important;
+    border: 1px solid rgba(255, 255, 255, 0.22) !important;
+    border-radius: 14px !important;
+    backdrop-filter: blur(8px);
+}}
+
+[data-testid="stExpander"] summary,
+[data-testid="stExpander"] summary p {{
+    color: #FFFFFF !important;
+}}
+
+/* =====================================
+   ПОЛЯ ВВОДА
+   ===================================== */
+
+.stApp input,
+.stApp textarea {{
+    background-color: #FFFFFF !important;
+    color: #263238 !important;
+    border-radius: 8px !important;
+}}
+
+.stApp input::placeholder,
+.stApp textarea::placeholder {{
+    color: #64748B !important;
+}}
+
+/* Выпадающие списки */
+
+[data-baseweb="select"] * {{
+    color: #263238 !important;
+}}
+
+/* =====================================
+   КНОПКИ
+   ===================================== */
+
+.stButton button {{
+    color: #FFFFFF !important;
+}}
+
 </style>
-
-<div class="swamp-brand">
-    <img src="data:image/png;base64,{logo}">
-    <h1>SwampEditor</h1>
-</div>
 """, unsafe_allow_html=True)
+</CodeBlock>
 
 st.caption("AI-ассистент проверки новостей · GigaChat + поиск источников + Firebase")
 
