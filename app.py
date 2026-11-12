@@ -462,7 +462,7 @@ def load_from_firebase(limit=10):
 # ==========================================
 # 11. ИНТЕРФЕЙС
 # ==========================================
-logo = get_image_base64("assets/swamp_logo.png")
+logo = get_image_base64("swamp_logo.png")
 background = get_image_base64("home_bg.png")
 
 st.markdown(f"""
