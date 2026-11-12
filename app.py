@@ -462,6 +462,113 @@ with st.sidebar:
         "3) GigaChat сверяет утверждения только с найденными фрагментами.\n\n"
         "Финальное решение — за редактором."
     )
+    st.divider()
+    page = st.radio(
+        "РАЗДЕЛЫ",
+        ["Проверка новости", "Личный кабинет"],
+        key="app_navigation"
+    )
+
+
+# ==========================================
+# 12. ЛИЧНЫЙ КАБИНЕТ РЕДАКТОРА
+# ==========================================
+
+if "editor_profile" not in st.session_state:
+    st.session_state["editor_profile"] = {
+        "name": "",
+        "position": "Редактор",
+        "department": "Оперативные новости"
+    }
+
+if page == "Личный кабинет":
+
+    st.title("Личный кабинет")
+    st.caption("Профиль редактора SwampEditor")
+
+    profile = st.session_state["editor_profile"]
+
+    left, right = st.columns([1.2, 0.8])
+
+    with left:
+        with st.container(border=True):
+            st.subheader("Настройки профиля")
+
+            with st.form("profile_form"):
+
+                name = st.text_input(
+                    "Имя",
+                    value=profile["name"],
+                    placeholder="Введите ваше имя"
+                )
+
+                positions = [
+                    "Редактор",
+                    "Журналист",
+                    "Фактчекер",
+                    "Выпускающий редактор"
+                ]
+
+                departments = [
+                    "Оперативные новости",
+                    "Региональные медиа",
+                    "Шоу-бизнес и лайфстайл",
+                    "Расследования и контекст",
+                    "Наука и технологии",
+                    "Спорт",
+                    "Креативные и бренд-проекты"
+                ]
+
+                position = st.selectbox(
+                    "Должность",
+                    positions,
+                    index=positions.index(profile["position"])
+                )
+
+                department = st.selectbox(
+                    "Редакция",
+                    departments,
+                    index=departments.index(profile["department"])
+                )
+
+                save = st.form_submit_button(
+                    "Сохранить изменения",
+                    type="primary",
+                    use_container_width=True
+                )
+
+                if save:
+                    if name.strip():
+                        st.session_state["editor_profile"] = {
+                            "name": name.strip(),
+                            "position": position,
+                            "department": department
+                        }
+                        st.success("Профиль обновлён!")
+                    else:
+                        st.warning("Введите имя.")
+
+    with right:
+        with st.container(border=True):
+            st.subheader("Мой профиль")
+
+            st.markdown("## 👤")
+
+            st.markdown(
+                f"### {profile['name'] or 'Новый редактор'}"
+            )
+
+            st.write(profile["position"])
+            st.caption(profile["department"])
+
+            st.divider()
+            st.caption("SwampEditor · Editor Workspace")
+
+    st.stop()
+
+# ======================================
+# Конец моего кода
+# =======================================
 
 text_input = st.text_area(
     "Вставь черновик новости:",
