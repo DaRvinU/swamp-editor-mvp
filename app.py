@@ -483,8 +483,14 @@ if "editor_profile" not in st.session_state:
 
 if page == "Личный кабинет":
 
-    st.title("Личный кабинет")
-    st.caption("Профиль редактора SwampEditor")
+    title_col1, title_col2 = st.columns([0.18, 0.82])
+
+    with title_col1:
+        st.image("frog_cabinet.png", width=110)
+
+    with title_col2:
+        st.title("Личный кабинет")
+        st.caption("Профиль редактора SwampEditor")
 
     profile = st.session_state["editor_profile"]
 
@@ -552,7 +558,7 @@ if page == "Личный кабинет":
         with st.container(border=True):
             st.subheader("Мой профиль")
 
-            st.markdown("## 👤")
+            st.image("frog_cabinet.png", width=180)
 
             st.markdown(
                 f"### {profile['name'] or 'Новый редактор'}"
