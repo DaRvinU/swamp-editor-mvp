@@ -1,13 +1,25 @@
 
+
+"""Необязательное подключение Firebase для истории проверок."""
+
 import os
 
 import streamlit as st
-import firebase_admin
-from firebase_admin import credentials, firestore
+
+try:
+    import firebase_admin
+    from firebase_admin import credentials, firestore
+except ImportError:
+    firebase_admin = None
+    credentials = None
+    firestore = None
 
 
 def _get_firebase_cred():
     """Получает Firebase credentials из Streamlit Secrets или файла."""
+
+    if credentials is None:
+        return None
 
     try:
         if "firebase" in st.secrets:
@@ -19,34 +31,37 @@ def _get_firebase_cred():
                 )
 
             return credentials.Certificate(cred_dict)
-
     except Exception:
         pass
 
     if os.path.exists("firebase-key.json"):
-        return credentials.Certificate("firebase-key.json")
+        try:
+            return credentials.Certificate("firebase-key.json")
+        except Exception:
+            return None
 
     return None
 
 
 def initialize_firebase():
-    """Подключает Firebase. Возвращает None, если подключение недоступно."""
+    """Подключает Firebase или возвращает None, если он недоступен."""
+
+    if firebase_admin is None or firestore is None:
+        return None
 
     try:
-        app = firebase_admin.get_app()
-    except ValueError:
-        credential = _get_firebase_cred()
-
-        if credential is None:
-            return None
-
         try:
-            app = firebase_admin.initialize_app(credential)
-        except Exception:
-            return None
+            app = firebase_admin.get_app()
+        except ValueError:
+            credential = _get_firebase_cred()
 
-    try:
+            if credential is None:
+                return None
+
+            app = firebase_admin.initialize_app(credential)
+
         return firestore.client(app=app)
+
     except Exception:
         return None
 
@@ -55,9 +70,9 @@ db = initialize_firebase()
 
 
 def save_to_firebase(text, results, mode):
-    """Сохраняет проверку. Возвращает False, если Firebase недоступен."""
+    """Сохраняет проверку. Возвращает False при недоступности Firebase."""
 
-    if db is None:
+    if db is None or firestore is None:
         return False
 
     try:
@@ -67,7 +82,6 @@ def save_to_firebase(text, results, mode):
             "mode": mode,
             "created_at": firestore.SERVER_TIMESTAMP,
         })
-
         return True
 
     except Exception:
@@ -75,10 +89,15 @@ def save_to_firebase(text, results, mode):
 
 
 def load_from_firebase(limit=10):
-    """Загружает последние проверки."""
+    """Загружает последние проверки из истории."""
 
-    if db is None:
+    if db is None or firestore is None:
         return []
+
+    try:
+        limit = max(1, min(int(limit), 100))
+    except (TypeError, ValueError):
+        limit = 10
 
     try:
         documents = (
@@ -95,7 +114,6 @@ def load_from_firebase(limit=10):
 
         for document in documents:
             data = document.to_dict() or {}
-
             created = data.get("created_at")
 
             data["created_at"] = (
