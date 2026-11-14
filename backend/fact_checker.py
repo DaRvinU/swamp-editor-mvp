@@ -67,6 +67,9 @@ def parse_json_array(raw):
 def extract_claims(text):
     """Разбивает текст на отдельные проверяемые утверждения."""
 
+    if not isinstance(text, str) or not text.strip():
+        return []
+
     parts = re.split(r"(?<=[.!?])\s+|\n+", text)
 
     claims = []
@@ -77,7 +80,7 @@ def extract_claims(text):
         if len(part.split()) >= 3:
             claims.append(part[:300])
 
-    if not claims and text.strip():
+    if not claims:
         claims = [text.strip()[:300]]
 
     return claims[:MAX_CLAIMS]
@@ -86,14 +89,22 @@ def extract_claims(text):
 def verify_claims(claims, evidence):
     """Сверяет утверждения с найденными фрагментами источников."""
 
+    if not claims:
+        return []
+
     blocks = []
 
     for index, claim in enumerate(claims):
-        sources = evidence[index]
+        sources = (
+            evidence[index]
+            if index < len(evidence)
+            else []
+        )
 
         if sources:
             source_text = "\n".join(
-                f"[{j}] {source['title']} — {source['snippet']}"
+                f"[{j}] {source.get('title', '')} — "
+                f"{source.get('snippet', '')}"
                 for j, source in enumerate(sources)
             )
         else:
@@ -108,24 +119,32 @@ def verify_claims(claims, evidence):
         "Сопоставь каждое утверждение с переданными фрагментами источников.\n"
         "Верни JSON-массив, по одному объекту на утверждение:\n"
         '[{"id": 0, "status": "confirmed" | "contradicted" | "no_source", '
-        '"comment": "1-2 предложения", "source": номер источника или null}]\n\n'
-        "Для каждого утверждения:\n"
-        "1. Проверь, относится ли источник к тому же событию.\n"
-        "2. Сравни даты, места, числа и участников.\n"
-        "3. confirmed — источник поддерживает утверждение.\n"
-        "4. contradicted — источник противоречит утверждению.\n"
-        "5. no_source — данных недостаточно или источник не о том событии.\n"
-        "Не придумывай доказательства.\n"
-        "Поле source должно содержать номер источника или null.\n\n"
+        '"comment": "1-2 предложения", "source": 0 или null}]\n\n'
+        "ВАЖНО: номера источников начинаются с нуля. "
+        "Используй только номера в квадратных скобках перед источниками.\n\n"
+        "Правила проверки:\n"
+        "1. Убедись, что источник относится к тому же событию.\n"
+        "2. Сравни даты, места, числа, участников и другие важные детали.\n"
+        "3. confirmed — источник о том же событии и подтверждает утверждение.\n"
+        "4. contradicted — источник о том же событии, но прямо противоречит "
+        "проверяемой детали.\n"
+        "5. no_source — данных недостаточно или источник относится к другому событию.\n"
+        "6. Не используй собственные знания вместо источников.\n"
+        "7. Если подходящего источника нет, укажи source: null "
+        "и status: no_source.\n"
+        "8. Не выбирай источник только из-за совпадения отдельных слов.\n"
+        "9. Не придумывай доказательства и цитаты.\n\n"
         + "\n\n".join(blocks)
     )
 
     response = call_gigachat(VERIFY_SYSTEM, prompt)
 
-    return parse_json_array(response)
+    verdicts = parse_json_array(response)
+
+    return verdicts
 
 
-def check_news_stub(text: str):
+def check_news_stub(text):
     """Демонстрационный режим без настоящего AI-фактчекинга."""
 
     sentences = [
@@ -196,43 +215,40 @@ def normalize_status(value):
 
 
 def parse_source_index(value, sources):
-    """Определяет индекс источника, указанный моделью."""
+    """Проверяет номер источника. Нумерация начинается с нуля."""
 
     if value is None or not sources:
         return None
 
-    if isinstance(value, list):
-        if not value:
-            return None
-        value = value[0]
+    if isinstance(value, bool):
+        return None
 
-    if isinstance(value, (int, float)):
-        index = int(value)
-    else:
-        text = str(value).strip()
+    if isinstance(value, int):
+        index = value
+
+    elif isinstance(value, str):
+        text = value.strip()
 
         for index, source in enumerate(sources):
-            if source.get("url") and source["url"] in text:
+            if source.get("url") and source["url"] == text:
                 return index
 
-        match = re.search(r"\d+", text)
-
-        if not match:
+        if not re.fullmatch(r"\d+", text):
             return None
 
-        index = int(match.group())
+        index = int(text)
+
+    else:
+        return None
 
     if 0 <= index < len(sources):
         return index
-
-    if index == len(sources):
-        return index - 1
 
     return None
 
 
 def best_matching_source(claim, sources):
-    """Ищет источник с наибольшим совпадением слов."""
+    """Вспомогательный поиск похожего источника по словам."""
 
     words = set(re.findall(r"\w{4,}", claim.lower()))
 
@@ -260,11 +276,17 @@ def best_matching_source(claim, sources):
 def check_news(text):
     """Полный процесс проверки новости."""
 
+    if not isinstance(text, str) or not text.strip():
+        return [], "demo"
+
     if not GIGA_KEY:
         return check_news_stub(text), "demo"
 
     try:
         claims = extract_claims(text)
+
+        if not claims:
+            return [], "demo"
 
         evidence = [
             search_evidence(claim)
@@ -279,20 +301,23 @@ def check_news(text):
             if not isinstance(verdict, dict):
                 continue
 
-            match = re.search(
-                r"\d+",
-                str(verdict.get("id", ""))
-            )
+            raw_id = verdict.get("id")
 
-            if match:
-                by_id[int(match.group())] = verdict
+            if isinstance(raw_id, int) and not isinstance(raw_id, bool):
+                claim_id = raw_id
+            elif isinstance(raw_id, str) and raw_id.isdigit():
+                claim_id = int(raw_id)
             else:
-                by_id.setdefault(position, verdict)
+                claim_id = position
+
+            if 0 <= claim_id < len(claims):
+                by_id.setdefault(claim_id, verdict)
 
         results = []
 
         for index, claim in enumerate(claims):
             verdict = by_id.get(index, {})
+
             sources = evidence[index]
 
             status = normalize_status(
@@ -304,11 +329,11 @@ def check_news(text):
                 sources,
             )
 
-            if source_index is None and status != "no_source":
-                source_index = best_matching_source(
-                    claim,
-                    sources,
-                )
+            # Без конкретного источника нельзя считать утверждение
+            # подтверждённым или опровергнутым.
+            if status in ("confirmed", "contradicted"):
+                if source_index is None:
+                    status = "no_source"
 
             url = (
                 sources[source_index]["url"]
@@ -316,19 +341,18 @@ def check_news(text):
                 else None
             )
 
-            if status != "no_source" and not url:
-                status = "no_source"
-
             comment = str(
                 verdict.get("comment") or ""
             ).strip()
 
             if not comment:
-                comment = (
-                    "Источники по утверждению не найдены."
-                    if not sources
-                    else "В найденных фрагментах недостаточно данных."
-                )
+                if status == "no_source":
+                    comment = (
+                        "Не удалось получить достаточно данных "
+                        "для обоснованного вывода."
+                    )
+                else:
+                    comment = "Результат требует проверки редактором."
 
             results.append({
                 "claim": claim,
@@ -346,5 +370,5 @@ def check_news(text):
         return results, "ai"
 
     except Exception:
-        # Ошибка AI не должна останавливать приложение.
+        # При ошибке API или обработки не выдаём ложный результат.
         return check_news_stub(text), "demo"
