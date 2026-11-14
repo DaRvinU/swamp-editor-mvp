@@ -145,6 +145,18 @@ st.markdown(f"""
     color: #FFFFFF !important;
 }}
 
+/* Бирюзовые кнопки разделов */
+[data-testid="stSidebar"] .stButton button[kind="primary"] {{
+    background-color: #16A6A3 !important;
+    border: 1px solid #16A6A3 !important;
+    color: #FFFFFF !important;
+}}
+
+[data-testid="stSidebar"] .stButton button[kind="primary"]:hover {{
+    background-color: #118B89 !important;
+    border-color: #118B89 !important;
+}}
+
 /* Тёмный фон боковой панели */
 [data-testid="stSidebar"] {{
     background: rgba(2, 20, 35, 0.94) !important;
@@ -177,25 +189,71 @@ st.markdown(
 
 st.caption("AI-ассистент проверки новостей · GigaChat + поиск источников + Firebase")
 
+# Переключение между страницами
+def set_page(page_name):
+    st.session_state["app_navigation"] = page_name
+
+
 with st.sidebar:
     st.header("О проекте")
     st.write("**Команда:** Source? Trust Me Bro")
     st.write("MVP для проверки новостей перед публикацией.")
+
     st.divider()
+
+    # РАЗДЕЛЫ
+    st.markdown("### РАЗДЕЛЫ")
+
+    st.button(
+        "Мониторинг новости",
+        type="primary",
+        use_container_width=True,
+        on_click=set_page,
+        args=("Мониторинг новости",)
+    )
+
+    st.button(
+        "Проверка новости",
+        type="primary",
+        use_container_width=True,
+        on_click=set_page,
+        args=("Проверка новости",)
+    )
+
+    st.button(
+        "Написание поста",
+        type="primary",
+        use_container_width=True,
+        on_click=set_page,
+        args=("Написание поста",)
+    )
+
+    st.divider()
+
+    # ЛИЧНЫЙ КАБИНЕТ
+    st.button(
+        "Личный кабинет",
+        type="primary",
+        use_container_width=True,
+        on_click=set_page,
+        args=("Личный кабинет",)
+    )
+
+    st.divider()
+
+    # ИНФОРМАЦИЯ О ПРОВЕРКЕ
     st.info(
         "1) Система разбивает текст на предложения.\n\n"
         "2) Ищет по ним источники.\n\n"
         "3) GigaChat сверяет утверждения только с найденными фрагментами.\n\n"
         "Финальное решение — за редактором."
     )
-    st.divider()
-    page = st.radio(
-        "РАЗДЕЛЫ",
-        ["Проверка новости", "Личный кабинет"],
-        key="app_navigation"
-    )
 
 
+page = st.session_state.get(
+    "app_navigation",
+    "Проверка новости"
+)
 
 # ==========================================
 # 12. ЛИЧНЫЙ КАБИНЕТ РЕДАКТОРА
@@ -237,7 +295,30 @@ profile.setdefault("email", "")
 profile.setdefault("edition", "Mash")
 profile.setdefault("custom_edition", "")
 
-if page == "Личный кабинет":
+# ==========================================
+# СТРАНИЦА 1. МОНИТОРИНГ НОВОСТИ
+# ==========================================
+
+if page == "Мониторинг новости":
+
+    st.title("Мониторинг новости")
+    st.info("Раздел находится в разработке.")
+
+    st.stop()
+
+
+# ==========================================
+# СТРАНИЦА 2. НАПИСАНИЕ ПОСТА
+# ==========================================
+
+elif page == "Написание поста":
+
+    st.title("Написание поста")
+    st.info("Раздел находится в разработке.")
+
+    st.stop()
+
+elif page == "Личный кабинет":
 
     st.title("Личный кабинет")
     st.caption("Профиль редактора SwampEditor")
