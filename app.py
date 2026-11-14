@@ -6,7 +6,13 @@ from pathlib import Path
 # set_page_config должен быть первой командой Streamlit
 st.set_page_config(page_title="SwampEditor MVP", page_icon="🐸", layout="wide")
 
-import json
+BASE_DIR = Path(__file__).resolve().parent
+ASSETS_DIR = BASE_DIR / "assets"
+
+
+def get_image_base64(filename):
+    path = ASSETS_DIR / filename
+    return base64.b64encode(path.read_bytes()).decode()
 
 import re
 
