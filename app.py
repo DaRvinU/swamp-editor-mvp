@@ -318,6 +318,10 @@ elif page == "Написание поста":
 
     st.stop()
 
+# =================================
+# Личный кабинет
+# ====================================
+
 elif page == "Личный кабинет":
 
     st.title("Личный кабинет")
@@ -387,6 +391,7 @@ elif page == "Личный кабинет":
                             "edition": edition,
                             "custom_edition": custom_edition.strip()
                         }
+                        profile = st.session_state["editor_profile"]
                         st.success("Профиль успешно обновлён!")
 
     with right:
